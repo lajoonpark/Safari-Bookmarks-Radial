@@ -1,0 +1,175 @@
+import Foundation
+
+/// Owns the ordered list of bookmarks that the radial menu shows.
+///
+/// Order is the product: slice numbers are muscle memory, so nothing ever reshuffles
+/// silently. Imports keep the existing order and append unseen links at the end.
+public final class BookmarkStore {
+
+    public struct MergeResult: Equatable {
+        public var added = 0
+        public var updated = 0
+        public var unchanged = 0
+        public var total: Int { added + updated + unchanged }
+    }
+
+    public private(set) var bookmarks: [Bookmark]
+    public let fileURL: URL?
+    private let fileManager: FileManager
+
+    public init(bookmarks: [Bookmark] = [], fileURL: URL? = nil, fileManager: FileManager = .default) {
+        self.bookmarks = bookmarks
+        self.fileURL = fileURL
+        self.fileManager = fileManager
+    }
+
+    public static var defaultFileURL: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+        return base.appendingPathComponent("SafariRadial/bookmarks.json")
+    }
+
+    // MARK: - Loading and saving
+
+    public static func load(from url: URL = BookmarkStore.defaultFileURL) -> BookmarkStore {
+        let store = BookmarkStore(fileURL: url)
+        guard let data = try? Data(contentsOf: url) else { return store }
+        do {
+            store.bookmarks = try JSONDecoder().decode([Bookmark].self, from: data)
+        } catch {
+            // A corrupt store must not lose the app: keep the bad file for recovery.
+            let backup = url.deletingLastPathComponent()
+                .appendingPathComponent("bookmarks-corrupt-\(Int(Date().timeIntervalSince1970)).json")
+            try? FileManager.default.copyItem(at: url, to: backup)
+        }
+        return store
+    }
+
+    public func save() {
+        guard let fileURL else { return }
+        do {
+            try fileManager.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(bookmarks)
+            try data.write(to: fileURL, options: .atomic)
+        } catch {
+            NSLog("SafariRadial: failed to save bookmarks: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Queries
+
+    public var count: Int { bookmarks.count }
+
+    public func bookmark(at index: Int) -> Bookmark? {
+        guard bookmarks.indices.contains(index) else { return nil }
+        return bookmarks[index]
+    }
+
+    public var paging: RadialPaging { RadialPaging(total: bookmarks.count) }
+
+    /// Bookmarks visible on a page, already sliced for display.
+    public func bookmarks(onPage page: Int) -> [Bookmark] {
+        paging.items(onPage: page).compactMap { bookmark(at: $0) }
+    }
+
+    // MARK: - Mutation
+
+    @discardableResult
+    public func add(_ bookmark: Bookmark, save shouldSave: Bool = true) -> Bool {
+        guard let normalized = Bookmark.normalizedURL(bookmark.url) else { return false }
+        var copy = bookmark
+        copy.url = normalized.absoluteString
+        guard !bookmarks.contains(where: { $0.comparisonKey == copy.comparisonKey }) else { return false }
+        bookmarks.append(copy)
+        if shouldSave { save() }
+        return true
+    }
+
+    @discardableResult
+    public func update(id: UUID, title: String, url: String, folder: String? = nil) -> Bool {
+        guard let index = bookmarks.firstIndex(where: { $0.id == id }),
+              let normalized = Bookmark.normalizedURL(url)
+        else { return false }
+        // Reject a change that would collide with a different entry.
+        if bookmarks.contains(where: { $0.id != id && $0.comparisonKey == Bookmark(title: title, url: normalized.absoluteString).comparisonKey }) {
+            return false
+        }
+        bookmarks[index].title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        bookmarks[index].url = normalized.absoluteString
+        if let folder { bookmarks[index].folder = folder }
+        save()
+        return true
+    }
+
+    @discardableResult
+    public func remove(id: UUID) -> Bool {
+        guard let index = bookmarks.firstIndex(where: { $0.id == id }) else { return false }
+        bookmarks.remove(at: index)
+        save()
+        return true
+    }
+
+    public func remove(atOffsets offsets: IndexSet) {
+        for index in offsets.sorted(by: >) where bookmarks.indices.contains(index) {
+            bookmarks.remove(at: index)
+        }
+        save()
+    }
+
+    /// Moves an entry, used by drag-to-reorder. Order is what makes slice numbers stable.
+    @discardableResult
+    public func move(fromOffsets source: IndexSet, toOffset destination: Int) -> Bool {
+        guard let from = source.first, bookmarks.indices.contains(from) else { return false }
+        let item = bookmarks.remove(at: from)
+        let target = destination > from ? destination - 1 : destination
+        bookmarks.insert(item, at: min(max(0, target), bookmarks.count))
+        save()
+        return true
+    }
+
+    /// Merges an import into the current list.
+    ///
+    /// - New links are appended in source order, so the first import fills page one.
+    /// - Existing links keep their position (muscle memory) but pick up a renamed title.
+    @discardableResult
+    public func merge(_ incoming: [Bookmark], save shouldSave: Bool = true) -> MergeResult {
+        var result = MergeResult()
+        var indexByKey = Dictionary(
+            bookmarks.enumerated().map { ($1.comparisonKey, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for bookmark in incoming {
+            guard let normalized = Bookmark.normalizedURL(bookmark.url) else { continue }
+            var copy = bookmark
+            copy.url = normalized.absoluteString
+            if let index = indexByKey[copy.comparisonKey] {
+                let newTitle = copy.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !newTitle.isEmpty, bookmarks[index].title != newTitle {
+                    bookmarks[index].title = newTitle
+                    result.updated += 1
+                } else {
+                    result.unchanged += 1
+                }
+                if bookmarks[index].folder.isEmpty, !copy.folder.isEmpty {
+                    bookmarks[index].folder = copy.folder
+                }
+            } else {
+                bookmarks.append(copy)
+                indexByKey[copy.comparisonKey] = bookmarks.count - 1
+                result.added += 1
+            }
+        }
+        if shouldSave { save() }
+        return result
+    }
+
+    public func replaceAll(_ bookmarks: [Bookmark], save shouldSave: Bool = true) {
+        self.bookmarks = bookmarks
+        if shouldSave { save() }
+    }
+}

@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Safari Radial — interaction preview</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: radial-gradient(120% 100% at 50% 0%, #1c1f2a 0%, #0c0d11 55%, #08090c 100%);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    color: #fff; -webkit-font-smoothing: antialiased;
+  }
+  /* Faux browser page behind, so the overlay reads as an overlay and not a blank canvas. */
+  .page { position: fixed; inset: 0; opacity: .45; pointer-events: none; }
+  .page .bar { height: 52px; background: #f6f6f7; display: flex; align-items: center; gap: 10px; padding: 0 18px; }
+  .page .dot { width: 11px; height: 11px; border-radius: 50%; background: #d5d5d9; }
+  .page .url { flex: 1; height: 26px; border-radius: 7px; background: #e8e8ec; max-width: 560px; margin: 0 auto; }
+  .page .body { padding: 46px 8%; max-width: 820px; margin: 0 auto; }
+  .page .hero { height: 18px; width: 46%; border-radius: 5px; background: #23262f; margin-bottom: 16px; }
+  .page .line { height: 10px; border-radius: 4px; background: #1b1e26; margin-bottom: 10px; }
+  .page .line.s { width: 62%; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .hint {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+    font-size: 12.5px; color: rgba(255,255,255,.44); text-align: center;
+    user-select: none; transition: opacity .35s ease; line-height: 1.9;
+    pointer-events: none; white-space: nowrap;
+  }
+  .hint kbd {
+    font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+    background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.1);
+    border-radius: 5px; padding: 1px 5px; margin: 0 1px;
+  }
+  .toast {
+    position: fixed; left: 50%; top: 34px; transform: translate(-50%, -12px);
+    background: rgba(28,30,38,.96); border: 1px solid rgba(255,255,255,.12);
+    padding: 9px 16px; border-radius: 10px; font-size: 12.5px;
+    opacity: 0; transition: opacity .3s ease, transform .3s cubic-bezier(.2,1.3,.4,1);
+    box-shadow: 0 12px 30px rgba(0,0,0,.5); pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  .toast .n {
+    display: inline-block; min-width: 17px; height: 17px; line-height: 17px;
+    border-radius: 50%; background: rgba(255,255,255,.14); font-size: 10.5px;
+    text-align: center; margin-right: 8px; font-family: ui-monospace, Menlo, monospace;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="bar"><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="url"></div></div>
+  <div class="body">
+    <div class="hero"></div>
+    <div class="line"></div><div class="line"></div><div class="line s"></div>
+  </div>
+</div>
+<canvas id="c"></canvas>
+<div class="toast" id="toast"></div>
+<div class="hint" id="hint">
+  move the cursor, then <kbd>⌘</kbd><kbd>R</kbd> to open &nbsp;·&nbsp;
+  <kbd>1</kbd>–<kbd>9</kbd> to fire a slice &nbsp;·&nbsp;
+  <kbd>esc</kbd> to close
+</div>
+<script>
+// ---------------------------------------------------------------------------
+// This preview mirrors RadialLayout.swift and Animation.swift so the geometry
+// and the spring feel cannot drift from the app. It is a development aid, not
+// part of the shipped app.
+// ---------------------------------------------------------------------------
+
+const SLICES = [
+  { title: "GitHub",            subtitle: "github.com" },
+  { title: "Hacker News",       subtitle: "news.ycombinator.com" },
+  { title: "Apple Developer",   subtitle: "developer.apple.com" },
+  { title: "Swift Docs",        subtitle: "swift.org" },
+  { title: "Linear",            subtitle: "linear.app" },
+  { title: "Figma",             subtitle: "figma.com" },
+  { title: "Dribbble",          subtitle: "dribbble.com" },
+  { title: "Notion",            subtitle: "notion.so" },
+  { title: "X",                 subtitle: "x.com" }
+];
+
+const RADIUS = 200;
+const HUB = Math.max(76, RADIUS * 0.48);
+const CENTER_R = HUB / 2;
+const INNER_R = CENTER_R * 1.16;
+const OUTER_R = RADIUS;
+const LABEL_R = INNER_R + (OUTER_R - INNER_R) * 0.44;
+
+const norm = a => { const t = 2 * Math.PI; let v = a % t; if (v < 0) v += t; return v; };
+const pt = (r, a) => ({ x: r * Math.sin(a), y: -r * Math.cos(a) });
+
+// Same integrator as SpringValue in Animation.swift: sub-stepped semi-implicit Euler.
+class Spring {
+  constructor(v, stiffness, damping) {
+    this.value = v; this.target = v; this.velocity = 0;
+    this.k = stiffness; this.d = damping;
+  }
+  get moving() {
+    return Math.abs(this.target - this.value) > 0.0005 || Math.abs(this.velocity) > 0.0005;
+  }
+  step(dt) {
+    const clamped = Math.min(dt, 1 / 30);
+    const steps = Math.max(1, Math.ceil(clamped / (1 / 240)));
+    const h = clamped / steps;
+    for (let i = 0; i < steps; i++) {
+      const force = this.k * (this.target - this.value) - this.d * this.velocity;
+      this.velocity += force * h;
+      this.value += this.velocity * h;
+    }
+    if (!this.moving) { this.value = this.target; this.velocity = 0; }
+    return this.value;
+  }
+  snap(v) { this.value = v; this.target = v; this.velocity = 0; }
+}
+
+const ease = {
+  outCubic: t => 1 - Math.pow(1 - t, 3),
+  outBack: (t, c = 1.7) => { const p = t - 1; return 1 + (c + 1) * p * p * p + c * p * p; }
+};
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const hintEl = document.getElementById('hint');
+const toastEl = document.getElementById('toast');
+
+let W = 0, H = 0, DPR = 1;
+let origin = { x: 0, y: 0 };
+let pointer = { x: 0, y: 0 };
+
+const state = {
+  open: false,
+  closing: false,
+  openSpring: new Spring(0, 320, 22),
+  contentSpring: new Spring(0, 280, 24),
+  hubHover: new Spring(0, 380, 28),
+  hubPress: new Spring(0, 500, 30),
+  hover: Array.from({ length: SLICES.length }, () => new Spring(0, 420, 30)),
+  press: Array.from({ length: SLICES.length }, () => new Spring(0, 500, 32)),
+  hovered: null,
+  pressed: null,
+  pressedHub: false
+};
+
+function resize() {
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if (!state.open) origin = { x: W / 2, y: H / 2 };
+}
+window.addEventListener('resize', resize);
+
+function hitTest(p) {
+  const x = p.x - origin.x, y = p.y - origin.y;
+  const dist = Math.hypot(x, y);
+  if (dist <= CENTER_R) return { kind: 'close' };
+  if (dist > OUTER_R) return { kind: 'none' };
+  const step = 2 * Math.PI / SLICES.length;
+  const theta = norm(Math.atan2(x, -y));
+  let idx = Math.round(theta / step) % SLICES.length;
+  if (idx < 0) idx += SLICES.length;
+  return { kind: 'slice', index: idx };
+}
+
+function openMenu() {
+  if (state.open) return;
+  state.open = true; state.closing = false;
+  // Keep the whole ring on screen even if the cursor is in a corner.
+  origin = {
+    x: Math.min(Math.max(pointer.x, RADIUS + 56), W - RADIUS - 56),
+    y: Math.min(Math.max(pointer.y, RADIUS + 56), H - RADIUS - 56)
+  };
+  state.openSpring.snap(0); state.contentSpring.snap(0);
+  state.openSpring.target = 1; state.contentSpring.target = 1;
+  state.hovered = null;
+  state.hover.forEach(s => s.snap(0));
+  hintEl.style.opacity = '0';
+  toastEl.classList.remove('show');
+}
+
+function closeMenu() {
+  if (!state.open || state.closing) return;
+  state.closing = true;
+  state.openSpring.target = 0; state.contentSpring.target = 0;
+  state.hovered = null; state.pressed = null;
+  state.pressedHub = false;
+  state.press.forEach(s => s.target = 0);
+  state.hubPress.target = 0;
+  setTimeout(() => { state.open = false; state.closing = false; hintEl.style.opacity = '1'; }, 230);
+}
+
+function fire(index) {
+  const b = SLICES[index];
+  if (!b) return;
+  toastEl.innerHTML = '<span class="n">' + (index + 1) + '</span>Opening ' + b.title;
+  toastEl.classList.add('show');
+  state.press[index].snap(1.5);
+  state.press[index].target = 0;
+  setTimeout(closeMenu, 80);
+}
+
+window.addEventListener('mousemove', e => {
+  pointer = { x: e.clientX, y: e.clientY };
+  if (!state.open) return;
+  const hit = hitTest(pointer);
+  const newHover = hit.kind === 'slice' ? hit.index : null;
+  if (newHover !== state.hovered) {
+    state.hovered = newHover;
+    state.hover.forEach((s, i) => s.target = (i === newHover) ? 1 : 0);
+  }
+  state.hubHover.target = hit.kind === 'close' ? 1 : 0;
+});
+
+window.addEventListener('mousedown', () => {
+  if (!state.open) { openMenu(); return; }
+  const hit = hitTest(pointer);
+  state.pressedHub = false; state.pressed = null;
+  if (hit.kind === 'close') { state.pressedHub = true; state.hubPress.target = 1; }
+  else if (hit.kind === 'slice') { state.pressed = hit.index; state.press[hit.index].target = 1; }
+});
+
+window.addEventListener('mouseup', () => {
+  if (!state.open) return;
+  const hit = hitTest(pointer);
+  if (state.pressedHub) state.hubPress.target = 0;
+  if (state.pressed !== null) {
+    const pressed = state.pressed;
+    state.press[pressed].target = 0;
+    state.pressed = null;
+    // Releasing over the same wedge fires; dragging off cancels.
+    if (hit.kind === 'slice' && hit.index === pressed) { fire(pressed); return; }
+  }
+  if (state.pressedHub && hit.kind === 'close') { closeMenu(); return; }
+  if (hit.kind === 'none') closeMenu();
+  state.pressedHub = false;
+});
+
+window.addEventListener('keydown', e => {
+  const isShortcut = e.metaKey && !e.ctrlKey && !e.altKey && (e.key === 'r' || e.key === 'R');
+  if (isShortcut) {
+    e.preventDefault();
+    state.open ? closeMenu() : openMenu();
+    return;
+  }
+  if (!state.open) return;
+  if (e.key === 'Escape') { e.preventDefault(); closeMenu(); return; }
+  if (/^[1-9]$/.test(e.key)) {
+    e.preventDefault();
+    const i = parseInt(e.key, 10) - 1;
+    if (i < SLICES.length) fire(i);
+  }
+});
+
+function drawableRange(i, inset) {
+  const count = SLICES.length;
+  const step = 2 * Math.PI / count;
+  const start = norm(i * step - step / 2);
+  if (count === 1) return { start: 0, sweep: 2 * Math.PI };
+  const sweep = norm(step);
+  const clamped = Math.min(Math.max(0, inset), Math.max(0, sweep / 2 - 0.001));
+  return { start: norm(start + clamped), sweep: sweep - clamped * 2 };
+}
+
+function slicePath(start, sweep, inner, outer) {
+  const segs = Math.max(2, Math.ceil(sweep / (Math.PI / 24)));
+  const p = new Path2D();
+  const a0 = pt(outer, start);
+  p.moveTo(a0.x, a0.y);
+  for (let i = 1; i <= segs; i++) {
+    const q = pt(outer, start + sweep * i / segs);
+    p.lineTo(q.x, q.y);
+  }
+  for (let i = segs; i >= 0; i--) {
+    const q = pt(inner, start + sweep * i / segs);
+    p.lineTo(q.x, q.y);
+  }
+  p.closePath();
+  return p;
+}
+
+const mix = (a, b, t) => 'rgb(' +
+  Math.round(a[0] + (b[0] - a[0]) * t) + ',' +
+  Math.round(a[1] + (b[1] - a[1]) * t) + ',' +
+  Math.round(a[2] + (b[2] - a[2]) * t) + ')';
+
+const COL = {
+  fillTop: [41, 43, 54], fillBottom: [26, 28, 36],
+  hoverTop: [74, 107, 176], hoverBottom: [51, 73, 127],
+  hub: [22, 23, 28], hubDeep: [15, 16, 19],
+  hubHover: [158, 51, 61]
+};
+
+function truncate(text, maxWidth) {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let s = text;
+  while (s.length > 1 && ctx.measureText(s + '…').width > maxWidth) s = s.slice(0, -1);
+  return s + '…';
+}
+
+function drawSlice(i, hover, press, alpha) {
+  const b = SLICES[i];
+  const base = i * (2 * Math.PI / SLICES.length);
+  const gap = Math.min(0.018, (2 * Math.PI / SLICES.length) * 0.055);
+  // Hover and press both widen the wedge slightly: the target grows under the cursor.
+  const drawn = drawableRange(i, gap - hover * 0.004 - press * 0.004);
+  const inner = INNER_R + 3 - hover * 4;
+  const outer = OUTER_R - 3 - press * 5;
+  // A lone slice is a full annulus. Drawing it as one closed polygon leaves a hairline
+  // seam where the outline meets itself, so fill two circles with the even-odd rule.
+  const isRing = drawn.sweep >= 2 * Math.PI - 1e-6;
+  const path = isRing ? null : slicePath(drawn.start, drawn.sweep, inner, outer);
+
+  ctx.save();
+  if (isRing) {
+    ctx.beginPath();
+    ctx.arc(0, 0, outer, 0, 2 * Math.PI);
+    ctx.arc(0, 0, inner, 0, 2 * Math.PI, true);
+    ctx.clip('evenodd');
+  } else {
+    ctx.clip(path);
+  }
+  const a = pt(INNER_R, base);
+  const z = pt(OUTER_R - hover * 10, base);
+  const g = ctx.createLinearGradient(a.x, a.y, z.x, z.y);
+  g.addColorStop(0, mix(COL.fillTop, COL.hoverTop, hover));
+  g.addColorStop(1, mix(COL.fillBottom, COL.hoverBottom, hover));
+  ctx.fillStyle = g;
+  if (isRing) {
+    ctx.beginPath();
+    ctx.arc(0, 0, outer, 0, 2 * Math.PI);
+    ctx.arc(0, 0, inner, 0, 2 * Math.PI, true);
+    ctx.fill('evenodd');
+  } else {
+    ctx.fill(path);
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.strokeStyle = hover > 0.02
+    ? 'rgba(255,255,255,' + (0.30 + 0.55 * hover).toFixed(3) + ')'
+    : 'rgba(255,255,255,0.10)';
+  ctx.lineWidth = 1;
+  if (isRing) {
+    ctx.beginPath();
+    ctx.arc(0, 0, outer, 0, 2 * Math.PI);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, inner, 0, 2 * Math.PI);
+    ctx.stroke();
+  } else {
+    ctx.stroke(path);
+  }
+  ctx.restore();
+
+  // Text block: number badge, one-line title, one-line subtitle, vertically centred.
+  const anchor = pt(LABEL_R + hover * 6, base);
+  const chord = 2 * LABEL_R * Math.sin(Math.PI / SLICES.length);
+  const depth = OUTER_R - INNER_R;
+  const maxWidth = Math.max(56, Math.min(chord * 0.86, depth * 0.94));
+
+  const badgeH = 17, badgeGap = 5, titleH = 17, subH = 14, spacing = 1;
+  const total = badgeH + badgeGap + titleH + spacing + subH;
+  let y = anchor.y - total / 2;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  const by = y + badgeH / 2;
+  ctx.fillStyle = 'rgba(255,255,255,' + (0.13 + 0.11 * hover).toFixed(3) + ')';
+  ctx.beginPath(); ctx.arc(anchor.x, by, badgeH / 2, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.font = '600 10px ui-monospace, Menlo, monospace';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(String(i + 1), anchor.x, by + 0.5);
+
+  y += badgeH + badgeGap;
+
+  ctx.fillStyle = 'rgba(255,255,255,' + (0.94 + 0.06 * hover).toFixed(3) + ')';
+  ctx.font = '600 12.5px -apple-system, "SF Pro Text", sans-serif';
+  ctx.fillText(truncate(b.title, maxWidth), anchor.x, y + titleH / 2);
+
+  y += titleH + spacing;
+
+  if (b.subtitle) {
+    ctx.fillStyle = 'rgba(255,255,255,0.50)';
+    ctx.font = '400 10px -apple-system, "SF Pro Text", sans-serif';
+    ctx.fillText(truncate(b.subtitle, maxWidth), anchor.x, y + subH / 2);
+  }
+
+  ctx.restore();
+}
+
+function drawHub(alpha) {
+  const hover = state.hubHover.value;
+  const press = state.hubPress.value;
+  const r = CENTER_R * (1 + 0.06 * hover - 0.10 * press);
+
+  ctx.save();
+  const g = ctx.createLinearGradient(0, -r, 0, r);
+  g.addColorStop(0, mix(COL.hub, COL.hubHover, hover));
+  g.addColorStop(1, mix(COL.hubDeep, COL.hubHover, hover * 0.75));
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,' + (0.16 + 0.35 * hover).toFixed(3) + ')';
+  ctx.lineWidth = 1; ctx.stroke();
+  ctx.restore();
+
+  // The ✕ rotates 45° when the hub is hovered.
+  const arm = r * 0.30;
+  ctx.save();
+  ctx.rotate(hover * Math.PI / 4);
+  ctx.strokeStyle = 'rgba(255,255,255,' + ((0.75 + 0.25 * hover) * alpha).toFixed(3) + ')';
+  ctx.lineWidth = Math.max(1.6, r * 0.075);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-arm, -arm); ctx.lineTo(arm, arm);
+  ctx.moveTo(arm, -arm); ctx.lineTo(-arm, arm);
+  ctx.stroke();
+  ctx.restore();
+}
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+
+  state.openSpring.step(dt);
+  state.contentSpring.step(dt);
+  state.hubHover.step(dt);
+  state.hubPress.step(dt);
+  state.hover.forEach(s => s.step(dt));
+  state.press.forEach(s => s.step(dt));
+
+  ctx.clearRect(0, 0, W, H);
+
+  const open = state.openSpring.value;
+  if (open > 0.001) {
+    const appear = ease.outCubic(Math.max(0, Math.min(1, open)));
+    const content = ease.outCubic(Math.max(0, Math.min(1, state.contentSpring.value)));
+
+    const g = ctx.createRadialGradient(origin.x, origin.y, 0, origin.x, origin.y, Math.max(RADIUS * 1.55, 260));
+    g.addColorStop(0, 'rgba(10,11,15,' + (0.62 * appear).toFixed(3) + ')');
+    g.addColorStop(1, 'rgba(6,7,10,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.save();
+    ctx.translate(origin.x, origin.y);
+    // Opening overshoots slightly then settles.
+    const s = 0.86 + 0.14 * ease.outBack(appear, 1.4);
+    ctx.scale(s, s);
+
+    for (let i = 0; i < SLICES.length; i++) {
+      drawSlice(i, state.hover[i].value, state.press[i].value, content);
+    }
+    drawHub(content);
+    ctx.restore();
+  }
+
+  requestAnimationFrame(frame);
+}
+
+const nParam = parseInt(new URLSearchParams(location.search).get('n') || '', 10);
+if (nParam >= 1 && nParam <= SLICES.length) {
+  SLICES.length = nParam;
+  state.hover.length = nParam;
+  state.press.length = nParam;
+}
+
+resize();
+origin = { x: W / 2, y: H / 2 };
+requestAnimationFrame(frame);
+
+// Handy for screenshots and for checking the layout without a cursor: #open opens the menu
+// at the centre after a beat.
+if (location.hash === '#open') {
+  pointer = { x: W / 2, y: H / 2 };
+  openMenu();
+  // Jump straight to the settled state so a screenshot shows the finished menu.
+  state.openSpring.snap(1); state.contentSpring.snap(1);
+  state.openSpring.target = 1; state.contentSpring.target = 1;
+  state.hover[1].snap(1); state.hover[1].target = 1;
+  state.hubHover.snap(0.35); state.hubHover.target = 0.35;
+}
+</script>
+</body>
+</html>
