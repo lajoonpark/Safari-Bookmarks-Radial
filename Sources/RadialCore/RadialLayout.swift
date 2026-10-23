@@ -5,7 +5,7 @@ import Foundation
 /// Angles are measured **clockwise from 12 o'clock**, which is how the slices are laid out
 /// on screen. Points passed to `hitTest` are relative to the centre of the ring with
 /// **y pointing down** (screen coordinates), matching `NSView(isFlipped: true)`.
-public struct RadialLayout: Equatable {
+public struct RadialLayout: Equatable, Sendable {
     public static let maxSlicesPerPage = 9
 
     public let sliceCount: Int

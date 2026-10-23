@@ -36,7 +36,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.radialController.updatePreferences(preferences)
             self.updateStatusItemTooltip()
-            self.statusMenu?.needsDisplay = true
         }
 
         registerHotkey(environment.preferences.hotkey)
