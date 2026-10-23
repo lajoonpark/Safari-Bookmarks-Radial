@@ -8,6 +8,8 @@ final class BookmarkListModel: ObservableObject {
     @Published var selectedID: UUID?
     @Published var searchText = ""
     @Published var syncMessage: SyncMessage?
+    /// Bumped when something asks the window to put the cursor in the add field.
+    @Published var focusRequest = 0
 
     enum SyncMessage: Equatable {
         case success(String)
@@ -98,6 +100,13 @@ final class BookmarkListModel: ObservableObject {
         let target = index + delta
         guard bookmarks.indices.contains(target) else { return }
         store.move(fromOffsets: IndexSet(integer: index), toOffset: delta > 0 ? target + 1 : target)
+        reload()
+    }
+
+    /// Promotes an entry to slot 1. Cheap in the UI, and the only reorder people ask for.
+    func moveToFront(_ bookmark: Bookmark) {
+        guard let index = bookmarks.firstIndex(where: { $0.id == bookmark.id }), index > 0 else { return }
+        store.move(fromOffsets: IndexSet(integer: index), toOffset: 0)
         reload()
     }
 

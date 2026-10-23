@@ -2,7 +2,7 @@ import Foundation
 
 /// A global keyboard shortcut, described independently of Carbon/AppKit.
 public struct HotkeySpec: Codable, Equatable {
-    /// Virtual key code (Carbon `kVK_*`). Default is `kVK_ANSI_R` (15).
+    /// Virtual key code (Carbon `kVK_*`). Default is `kVK_ANSI_E` (14).
     public var keyCode: UInt32
     public var command: Bool
     public var option: Bool
@@ -17,8 +17,12 @@ public struct HotkeySpec: Codable, Equatable {
         self.shift = shift
     }
 
-    /// ⌘R, the requested default.
-    public static let `default` = HotkeySpec(keyCode: 15, command: true)
+    /// ⌘E, the requested default. Unlike ⌘R it is not Safari's reload, so shadowing it
+    /// costs the frontmost app much less.
+    public static let `default` = HotkeySpec(keyCode: 14, command: true)
+
+    /// The shortcut this app shipped with before ⌘E. Only used to recognise old preferences.
+    public static let legacyDefault = HotkeySpec(keyCode: 15, command: true)
 
     /// At least one of ⌘/⌃/⌥ is required, otherwise the shortcut would swallow plain typing.
     public var isValid: Bool { command || control || option }

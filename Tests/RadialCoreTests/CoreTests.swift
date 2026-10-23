@@ -266,9 +266,21 @@ final class BookmarkStoreTests: XCTestCase {
 
 final class HotkeySpecTests: XCTestCase {
 
-    func testDefaultIsCommandR() {
-        XCTAssertEqual(HotkeySpec.default.displayName, "⌘R")
+    func testDefaultIsCommandE() {
+        XCTAssertEqual(HotkeySpec.default.displayName, "⌘E")
         XCTAssertTrue(HotkeySpec.default.isValid)
+    }
+
+    func testDefaultIsNotSafariReload() {
+        // ⌘R is Safari's reload, and a Carbon hot key wins over the frontmost app, so the
+        // shipped default must not be ⌘R.
+        XCTAssertNotEqual(HotkeySpec.default.keyCode, HotkeySpec.legacyDefault.keyCode)
+        XCTAssertEqual(HotkeySpec.legacyDefault.displayName, "⌘R")
+    }
+
+    func testDefaultConflictIsMinor() {
+        // ⌘E costs Safari "use selection for find", which is a nuisance, not a broken app.
+        XCTAssertEqual(HotkeyConflicts.conflict(for: .default)?.severity, .minor)
     }
 
     func testModifierOrderInDisplayName() {
@@ -412,9 +424,10 @@ final class RadialSessionTests: XCTestCase {
 final class HotkeyConflictTests: XCTestCase {
 
     func testCommandRIsFlaggedAsSafariReload() {
-        let conflict = HotkeyConflicts.conflict(for: .default)
+        let conflict = HotkeyConflicts.conflict(for: .legacyDefault)
         XCTAssertEqual(conflict?.owner, "Safari")
         XCTAssertEqual(conflict?.description, "reloads the page")
+        XCTAssertEqual(conflict?.severity, .major)
     }
 
     func testControlOptionRIsFree() {
@@ -430,14 +443,104 @@ final class HotkeyConflictTests: XCTestCase {
     }
 
     func testSaferAlternativeAddsControl() {
-        let safer = HotkeyConflicts.saferAlternative(to: .default)
+        let safer = HotkeyConflicts.saferAlternative(to: .legacyDefault)
         XCTAssertEqual(safer, HotkeySpec(keyCode: 15, command: true, control: true))
+        XCTAssertNil(HotkeyConflicts.conflict(for: safer))
+    }
+
+    func testSaferAlternativeKeepsTheKeyThatWasChosen() {
+        let safer = HotkeyConflicts.saferAlternative(to: .default)
+        XCTAssertEqual(safer.keyCode, HotkeySpec.default.keyCode)
         XCTAssertNil(HotkeyConflicts.conflict(for: safer))
     }
 
     func testSaferAlternativeNeverProducesInvalidHotkey() {
         let optionOnly = HotkeySpec(keyCode: 15, option: true)
         XCTAssertTrue(HotkeyConflicts.saferAlternative(to: optionOnly).isValid)
+    }
+}
+
+final class LabelFitTests: XCTestCase {
+
+    /// The bug this locks down: a label drawn as a horizontal box at 3 o'clock used to punch
+    /// through the slice walls. Every box the layout permits must sit inside its own wedge.
+    func testLabelsNeverOverflowTheirSlice() {
+        for count in 2...RadialLayout.maxSlicesPerPage {
+            for radius in [140.0, 200.0, 320.0] as [CGFloat] {
+                let layout = RadialLayout(sliceCount: count, centerRadius: radius * 0.26, outerRadius: radius)
+                for index in 0..<count {
+                    for height in [20.0, 34.0] as [CGFloat] {
+                        let width = layout.labelWidthLimit(for: index, height: height, pad: 4)
+                        XCTAssertGreaterThan(width, 0, "n=\(count) r=\(radius) i=\(index)")
+                        let anchor = layout.labelPoint(for: index)
+                        for dx in [-width / 2, width / 2] {
+                            for dy in [-height / 2, height / 2] {
+                                let corner = CGPoint(x: anchor.x + dx, y: anchor.y + dy)
+                                XCTAssertTrue(
+                                    layout.sliceContains(corner, index: index, inset: 0),
+                                    "n=\(count) r=\(radius) i=\(index) h=\(height) corner \(corner) escaped"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func testTallerBoxesGetLessRoom() {
+        let layout = RadialLayout(sliceCount: 9, centerRadius: 52, outerRadius: 200)
+        let short = layout.labelWidthLimit(for: 2, height: 20, pad: 6)
+        let tall = layout.labelWidthLimit(for: 2, height: 40, pad: 6)
+        XCTAssertLessThanOrEqual(tall, short)
+    }
+
+    func testLimitsArePositiveAtEverySliceCount() {
+        // A zero limit would mean labels are invisible, which reads as a rendering bug.
+        for count in 1...RadialLayout.maxSlicesPerPage {
+            let layout = RadialLayout(sliceCount: count, centerRadius: 52, outerRadius: 200)
+            for index in 0..<count {
+                XCTAssertGreaterThan(layout.labelWidthLimit(for: index, height: 34, pad: 6), 40)
+            }
+        }
+    }
+}
+
+final class PreferencesMigrationTests: XCTestCase {
+
+    func testMigratesTheOldCommandRDefault() {
+        var prefs = Preferences(hotkey: HotkeySpec.legacyDefault)
+        prefs.migrateLegacyHotkey()
+        XCTAssertEqual(prefs.hotkey, .default)
+        XCTAssertTrue(prefs.hotkeyMigrated)
+    }
+
+    func testMigrationIsOneShot() {
+        var prefs = Preferences(hotkey: HotkeySpec.legacyDefault)
+        prefs.migrateLegacyHotkey()
+        // Someone who deliberately goes back to ⌘R afterwards keeps it.
+        prefs.hotkey = HotkeySpec.legacyDefault
+        prefs.migrateLegacyHotkey()
+        XCTAssertEqual(prefs.hotkey, HotkeySpec.legacyDefault)
+    }
+
+    func testMigrationLeavesACustomShortcutAlone() {
+        let custom = HotkeySpec(keyCode: 49, command: true, control: true)
+        var prefs = Preferences(hotkey: custom)
+        prefs.migrateLegacyHotkey()
+        XCTAssertEqual(prefs.hotkey, custom)
+    }
+
+    func testOlderPreferencesFileDefaultsOnboardingToDone() throws {
+        // A file written before onboarding existed means the user is not new.
+        let json = #"{"hotkey":{"keyCode":15,"command":true,"option":false,"control":false,"shift":false},"menuRadius":200}"#
+        let prefs = try JSONDecoder().decode(Preferences.self, from: Data(json.utf8))
+        XCTAssertTrue(prefs.hasCompletedOnboarding)
+        XCTAssertFalse(prefs.hotkeyMigrated)
+    }
+
+    func testFreshPreferencesAskForOnboarding() {
+        XCTAssertFalse(Preferences.default.hasCompletedOnboarding)
     }
 }
 

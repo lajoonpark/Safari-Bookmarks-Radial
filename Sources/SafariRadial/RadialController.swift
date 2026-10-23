@@ -70,13 +70,19 @@ final class RadialController {
         let screen = ScreenGeometry.activeScreen()
         let pointer = ScreenGeometry.pointerInView(screen)
         let radius = CGFloat(preferences.menuRadius)
-        // Keep the whole ring plus its labels on screen, even when the cursor is in a corner.
-        let margin = radius + 56
-        let centerX = screen.frame.width > margin * 2
-            ? min(max(pointer.x, margin), screen.frame.width - margin)
+        // Keep the whole dial on screen, but only push it as far as it must be pushed. The
+        // printed number band sets the horizontal requirement, while the hint row below the
+        // band sets the vertical one. One generous margin for both would yank the dial away
+        // from the cursor near a side edge for no reason.
+        let sideMargin = radius + RadialTheme.bezelBandInset + RadialTheme.bezelBandWidth + 4
+        let topMargin = sideMargin
+        // Below the ring sit the bezel, the page pips and the key hints — roughly 126pt.
+        let bottomMargin = radius + 126
+        let centerX = screen.frame.width > sideMargin * 2
+            ? min(max(pointer.x, sideMargin), screen.frame.width - sideMargin)
             : screen.frame.width / 2
-        let centerY = screen.frame.height > margin * 2
-            ? min(max(pointer.y, margin), screen.frame.height - margin)
+        let centerY = screen.frame.height > topMargin + bottomMargin
+            ? min(max(pointer.y, topMargin), screen.frame.height - bottomMargin)
             : screen.frame.height / 2
         let ringCenter = CGPoint(x: centerX, y: centerY)
         menuView.ringCenter = ringCenter
@@ -114,7 +120,11 @@ final class RadialController {
 
     private func tearDown() {
         panel.orderOut(nil)
-        if let app = previouslyActiveApp, app.bundleIdentifier != Bundle.main.bundleIdentifier {
+        // Hand focus back to whatever the user was doing — unless one of this app's own
+        // windows is open, in which case handing focus to another app would be wrong.
+        let hasOwnWindow = NSApp.windows.contains { $0.isVisible && $0 !== panel }
+        if !hasOwnWindow, let app = previouslyActiveApp,
+           app.bundleIdentifier != Bundle.main.bundleIdentifier {
             app.activate(options: [])
         }
         previouslyActiveApp = nil
@@ -127,11 +137,17 @@ final class RadialController {
         open(bookmark)
     }
 
-    private func open(_ bookmark: Bookmark) {
+    private func open(_ bookmark: Bookmark, after delay: TimeInterval = 0) {
         guard let url = Bookmark.normalizedURL(bookmark.url) else { return }
         // Launch before dismissing: the click should feel like it took effect instantly.
         SafariLauncher.open(url, target: preferences.openIn, background: preferences.openInBackground)
-        finishAfterClose()
+        if delay > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.finishAfterClose()
+            }
+        } else {
+            finishAfterClose()
+        }
     }
 
     private func goToPage(_ page: Int) {
@@ -168,7 +184,12 @@ final class RadialController {
         guard case .activated(let bookmark, _) = session.activate(key: character, bookmarks: store.bookmarks) else {
             return event
         }
-        open(bookmark)
+        // The key and the click should feel like the same action, so the slice springs back
+        // before the panel tears down.
+        if let index = RadialLayout.sliceIndex(forKey: character) {
+            menuView.flashSlice(index)
+        }
+        open(bookmark, after: 0.09)
         return nil
     }
 

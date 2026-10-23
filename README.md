@@ -14,7 +14,7 @@ leave the keys and the cursor never leaves the page.
         └───────────────┘
 ```
 
-- **⌘R** (configurable) opens the menu at the cursor, anywhere in macOS.
+- **⌘E** (configurable in Settings) opens the dial at the cursor, anywhere in macOS.
 - **1–9** opens that slice immediately. ← / → page through the rest.
 - **✕** in the centre, **Esc**, or the shortcut again closes it. A click anywhere outside
   also dismisses.
@@ -57,23 +57,25 @@ So the app:
   truth. Safari is an import source, not a live dependency.
 - Skips the Reading List (those are "leaves" too, but not bookmarks you'd want in a radial).
 
+**Full Disk Access is optional.** It is the only thing that unlocks the Safari import. The
+dial, the manager, reordering, every setting and the shortcut all work without it, and the
+onboarding screen says so plainly before asking.
+
 **Ad-hoc signing caveat:** Full Disk Access is granted to a specific code signature. With
 `./scripts/build.sh`'s default ad-hoc signing, every rebuild changes that signature and macOS
 silently revokes the grant. If you're iterating, sign with a Developer ID, or re-grant after
 rebuilds. This is a macOS policy, not something the app can work around.
 
-### 2. ⌘R is also Safari's Reload
+### 2. The default shortcut is ⌘E, not ⌘R
 
-You asked for ⌘R, and it's the default. But a Carbon global hot key is delivered *before* the
-frontmost app sees the key, so while Safari Radial runs, ⌘R no longer reloads pages.
+⌘R is Safari's reload, and a Carbon global hot key is delivered *before* the frontmost app
+sees the key — so registering ⌘R would quietly break reloading pages. The default is **⌘E**
+instead, because ⌘E is not taken anywhere important and it avoids that trade-off entirely.
 
-That's a genuine trade-off rather than a bug, so the app tells you instead of hiding it: the
-Settings pane shows "⌘R usually reloads the page in Safari" and offers a one-click switch to
-**⌃⌘R**. ⌃⌘R and ⌃⌥R are the shortcuts I'd actually recommend for daily use; ⌘R is there
-because it's what you asked for.
-
-If you want ⌘R for the radial *and* reload in Safari, add a custom shortcut for
-**View › Reload Page** in System Settings › Keyboard › App Shortcuts.
+⌘E does shadow Safari's View › Use Selection for Find. That is minor and fully recoverable, so
+the Settings pane names the owner and severity of any clash and offers a one-click escape to
+**⌃⌘E**. Preferences written by an older build on the ⌘R default are migrated to ⌘E once;
+any shortcut you pick yourself, including deliberately going back to ⌘R, is left alone.
 
 ### Why not a Safari extension?
 
@@ -91,7 +93,7 @@ Requires macOS 13+ and Xcode (or the Command Line Tools).
 git clone <this-repo>
 cd Safari-Bookmarks-Radial
 
-swift test              # 68 unit tests for the portable core
+swift test              # 86 unit tests for the portable core
 ./scripts/build.sh --run
 ```
 
@@ -104,7 +106,7 @@ First run:
    bookmarks yet.
 2. Click **Import from Safari**. If macOS blocks the read, click **Grant Full Disk Access**,
    add the app, and import again.
-3. Press **⌘R** anywhere.
+3. Press **⌘E** anywhere.
 
 If you'd rather build in Xcode: `open Package.swift`, select the `SafariRadial` scheme, run.
 Note that running from Xcode/`swift run` gives you an unsigned binary, which macOS treats as

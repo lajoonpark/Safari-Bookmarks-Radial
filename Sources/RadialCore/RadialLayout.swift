@@ -19,7 +19,9 @@ public struct RadialLayout: Equatable {
     public init(sliceCount: Int, centerRadius: CGFloat = 52, outerRadius: CGFloat = 200) {
         self.sliceCount = max(0, sliceCount)
         self.centerRadius = centerRadius
-        self.innerRadius = centerRadius * 1.16
+        // The gap between the hub and the ring is what makes the hub read as a separate
+        // physical object, so it scales with the dial instead of being a fixed 1.16×.
+        self.innerRadius = centerRadius + max(13, outerRadius * 0.085)
         self.outerRadius = max(outerRadius, self.innerRadius + 40)
     }
 
@@ -118,7 +120,75 @@ public struct RadialLayout: Equatable {
         point(radius: labelRadius, angle: centerAngle(of: index))
     }
 
-    public var labelRadius: CGFloat { innerRadius + (outerRadius - innerRadius) * 0.44 }
+    public var labelRadius: CGFloat { innerRadius + (outerRadius - innerRadius) * 0.52 }
+
+    /// Radius of the engraved numbers on the bezel, outside the painted ring.
+    public var bezelRadius: CGFloat { outerRadius + 15 }
+
+    /// Radius of the pointer target's centre line after a hover lift.
+    public var hoverLabelRadius: CGFloat { labelRadius + 6 }
+
+    public var ringDepth: CGFloat { outerRadius - innerRadius }
+
+    /// Whether `point` (relative to the centre) falls inside the painted part of a slice.
+    ///
+    /// `sliceCount == 1` is a full ring, so every angle belongs to it.
+    public func sliceContains(_ point: CGPoint, index: Int, inset: CGFloat = 0) -> Bool {
+        guard sliceCount > 0, index >= 0, index < sliceCount else { return false }
+        let radius = hypot(point.x, point.y)
+        guard radius >= innerRadius + inset, radius <= outerRadius - inset else { return false }
+        guard sliceCount > 1 else { return true }
+        let angle = RadialLayout.normalize(atan2(point.x, -point.y))
+        let delta = abs(angle - RadialLayout.normalize(centerAngle(of: index)))
+        let wrapped = min(delta, 2 * .pi - delta)
+        let half = step / 2 - inset / max(radius, 1)
+        return wrapped <= max(0, half)
+    }
+
+    /// Widest box of height `height` that still fits inside slice `index` when centred on
+    /// the slice's label anchor.
+    ///
+    /// Labels are drawn as horizontal rectangles, and a wedge's horizontal room depends on
+    /// where it sits on the ring: the same text fits at 12 o'clock but pokes through the
+    /// walls of a 3 o'clock wedge. Rather than approximating that with a chord fraction,
+    /// the candidate width is bisected against the wedge itself. This is what keeps text
+    /// off the slice edges at every slice count.
+    public func labelWidthLimit(
+        for index: Int,
+        radius: CGFloat? = nil,
+        height: CGFloat,
+        pad: CGFloat = 8
+    ) -> CGFloat {
+        guard sliceCount > 0 else { return 0 }
+        let anchor = point(radius: radius ?? labelRadius, angle: centerAngle(of: index))
+        let halfHeight = max(0, height) / 2
+
+        func fits(_ width: CGFloat) -> Bool {
+            let halfWidth = width / 2
+            for dx in [-halfWidth, halfWidth] {
+                for dy in [-halfHeight, halfHeight] {
+                    let corner = CGPoint(x: anchor.x + dx, y: anchor.y + dy)
+                    if !sliceContains(corner, index: index, inset: pad) { return false }
+                }
+            }
+            return true
+        }
+
+        var low: CGFloat = 0
+        // The widest straight line that can lie inside the wedge is the chord at the label
+        // radius. Starting the search there keeps the result meaningful for wide slices: with
+        // two slices the wedge is a half-disc, where an unbounded probe "fits" at any width and
+        // would hand back a label several hundred points wide.
+        let anchorRadius = radius ?? labelRadius
+        var high = min(2 * anchorRadius * sin(min(step, .pi) / 2), 260)
+        guard high > 0 else { return 0 }
+        guard fits(high) == false else { return high }
+        for _ in 0..<18 {
+            let mid = (low + high) / 2
+            if fits(mid) { low = mid } else { high = mid }
+        }
+        return low
+    }
 
     /// Keyboard shortcut shown inside slice `index` (1…9 within the current page).
     public static func keyLabel(forSlice index: Int) -> String {

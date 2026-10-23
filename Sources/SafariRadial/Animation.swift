@@ -62,6 +62,11 @@ enum Easing {
         1 - pow(1 - t, 3)
     }
 
+    /// Decelerates hard at the end. Used for the bezel sweep, which should shoot off and settle.
+    static func outQuint(_ t: Double) -> Double {
+        1 - pow(1 - t, 5)
+    }
+
     static func inCubic(_ t: Double) -> Double {
         t * t * t
     }

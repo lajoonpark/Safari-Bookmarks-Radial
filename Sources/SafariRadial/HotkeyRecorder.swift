@@ -74,16 +74,11 @@ struct HotkeyRecorder: NSViewRepresentable {
         }
 
         override func draw(_ dirtyRect: NSRect) {
-            let label: String
-            if isRecording {
-                label = "Press a shortcut…"
-            } else {
-                label = ""
-            }
-            guard !label.isEmpty else { return }
+            guard isRecording else { return }
+            let label = "Press a shortcut…"
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-                .foregroundColor: NSColor(calibratedRed: 0.36, green: 0.55, blue: 0.95, alpha: 1),
+                .font: Palette.nsDisplay(12, .medium),
+                .foregroundColor: Palette.nsSignal,
             ]
             let size = label.size(withAttributes: attributes)
             label.draw(

@@ -15,6 +15,10 @@ public struct Preferences: Codable, Equatable {
     public var menuRadius: Double
     /// Start the app automatically when you log in.
     public var launchAtLogin: Bool
+    /// Whether the first-run tour has been finished or dismissed.
+    public var hasCompletedOnboarding: Bool
+    /// Set once the ⌘R → ⌘E default change has been applied, so an explicit ⌘R is respected.
+    public var hotkeyMigrated: Bool
 
     public enum OpenTarget: String, Codable, CaseIterable {
         case newTab
@@ -37,7 +41,9 @@ public struct Preferences: Codable, Equatable {
         autoSyncOnLaunch: Bool = true,
         showNumbers: Bool = true,
         menuRadius: Double = 200,
-        launchAtLogin: Bool = false
+        launchAtLogin: Bool = false,
+        hasCompletedOnboarding: Bool = false,
+        hotkeyMigrated: Bool = false
     ) {
         self.hotkey = hotkey
         self.openIn = openIn
@@ -46,6 +52,8 @@ public struct Preferences: Codable, Equatable {
         self.showNumbers = showNumbers
         self.menuRadius = menuRadius
         self.launchAtLogin = launchAtLogin
+        self.hasCompletedOnboarding = hasCompletedOnboarding
+        self.hotkeyMigrated = hotkeyMigrated
     }
 
     public static let `default` = Preferences()
@@ -60,12 +68,28 @@ public struct Preferences: Codable, Equatable {
         showNumbers = try container.decodeIfPresent(Bool.self, forKey: .showNumbers) ?? fallback.showNumbers
         menuRadius = try container.decodeIfPresent(Double.self, forKey: .menuRadius) ?? fallback.menuRadius
         launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? fallback.launchAtLogin
+        // Absent keys mean an older preferences file, which also means the user never
+        // chose a shortcut knowingly — so a missing flag stays false.
+        hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding)
+            ?? container.contains(.hotkey) // a file that already has settings predates onboarding
+        hotkeyMigrated = try container.decodeIfPresent(Bool.self, forKey: .hotkeyMigrated) ?? false
     }
 
     /// Keeps pathological values out of the UI.
     public mutating func clamp() {
         menuRadius = min(max(menuRadius, 140), 320)
         if !hotkey.isValid { hotkey = .default }
+    }
+
+    /// Moves anyone still on the old ⌘R default onto ⌘E, once.
+    ///
+    /// ⌘R is Safari's reload, and a Carbon hot key wins over the frontmost app, so leaving
+    /// people on the old default would keep breaking reload for them. Anyone who picked
+    /// something else — including deliberately picking ⌘R after the migration — is left alone.
+    public mutating func migrateLegacyHotkey() {
+        guard !hotkeyMigrated else { return }
+        if hotkey == HotkeySpec.legacyDefault { hotkey = .default }
+        hotkeyMigrated = true
     }
 
     public static var defaultFileURL: URL {

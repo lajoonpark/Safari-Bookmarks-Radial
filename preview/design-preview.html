@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Safari Radial — design preview</title>
+<style>
+  /* Design tokens. Mirrors Sources/SafariRadial/Palette.swift.
+     This page exists so the visual language can be reviewed without a Mac. */
+  :root {
+    --void:       #061417;
+    --hull:       #0B2126;
+    --rim:        rgba(242,234,221,.09);
+    --bone:       #F2EADD;
+    --bone-dim:   rgba(242,234,221,.56);
+    --bone-faint: rgba(242,234,221,.30);
+    --signal:     #FF6B2C;
+    --mint:       #6FD8BE;
+    --alarm:      #FF5C7A;
+    --display: "Avenir Next", "Avenir", "Segoe UI", system-ui, sans-serif;
+    --mono: "SF Mono", ui-monospace, "DejaVu Sans Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; color: var(--bone); font-family: var(--display); -webkit-font-smoothing: antialiased; }
+  .stage { position: fixed; inset: 0; overflow: hidden; }
+
+  .desktop { position: absolute; inset: 0; background:
+     radial-gradient(130% 110% at 15% -10%, #1a3038 0%, #0b1a1e 48%, #050d0f 100%); }
+  .desktop .win {
+    position: absolute; left: 70px; top: 80px; width: 700px; height: 450px;
+    background: #0f1a1d; border-radius: 11px; overflow: hidden;
+    box-shadow: 0 40px 100px rgba(0,0,0,.7), 0 0 0 1px rgba(255,255,255,.06);
+  }
+  .desktop .win .bar { height: 44px; background: #131f23; display: flex; align-items: center; gap: 8px; padding: 0 14px; }
+  .desktop .win .dot { width: 10px; height: 10px; border-radius: 50%; background: #2b3a3f; }
+  .desktop .win .nav { flex: 1; height: 22px; background: #1a282d; border-radius: 6px; margin: 0 14px; }
+  .desktop .win .body { padding: 36px 46px; }
+  .desktop .win .h { height: 18px; width: 40%; background: #1d2d32; border-radius: 5px; margin-bottom: 20px; }
+  .desktop .win .ln { height: 8px; background: #16242a; border-radius: 4px; margin-bottom: 11px; }
+  .desktop .win .ln.s { width: 55%; }
+
+  canvas#radial { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  .frame {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    border-radius: 12px; overflow: hidden;
+    background: var(--void);
+    box-shadow: 0 60px 140px rgba(0,0,0,.75), 0 0 0 1px var(--rim);
+  }
+  #manager { width: 900px; }
+  .titlebar {
+    height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 14px;
+    background: linear-gradient(#0c2429, #091d21);
+    border-bottom: 1px solid rgba(0,0,0,.35);
+  }
+  .tl { width: 12px; height: 12px; border-radius: 50%; }
+  .tl.r { background: #ff5f57; } .tl.y { background: #febc2e; } .tl.g { background: #28c840; }
+  .titlebar .name { flex: 1; text-align: center; font-size: 12.5px; color: var(--bone-dim); }
+
+  .m-head { display: flex; align-items: flex-start; gap: 20px; padding: 22px 26px 16px; }
+  .wordmark { font-size: 23px; font-weight: 600; letter-spacing: -.02em; }
+  .wordmark .dot { color: var(--signal); }
+  .meta { font-family: var(--mono); font-size: 10.5px; color: var(--bone-dim); margin-top: 6px; }
+  .meta b { color: var(--bone); font-weight: 500; }
+  .spacer { flex: 1; }
+  .mini { width: 92px; height: 92px; flex: none; }
+
+  .search {
+    display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 8px 0 10px;
+    border: 1px solid var(--rim); border-radius: 7px; background: var(--hull);
+    color: var(--bone-faint); font-size: 12px; width: 200px;
+  }
+  .search .k { margin-left: auto; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 13px;
+    border-radius: 7px; border: 1px solid var(--rim); background: var(--hull);
+    color: var(--bone); font-size: 12px; font-weight: 500;
+  }
+  .btn.signal { background: var(--signal); border-color: transparent; color: #200d04; font-weight: 600; }
+  .btn.gear { padding: 0; width: 30px; flex: 0 0 30px; font-size: 13px; line-height: 1; }
+  .nowrap { white-space: nowrap; }
+  .btn.ghost { background: transparent; }
+  .kbd {
+    font-family: var(--mono); font-size: 10px; padding: 2px 5px; border-radius: 4px;
+    background: rgba(242,234,221,.07); border: 1px solid var(--rim); color: var(--bone-dim);
+  }
+
+  .addbar { display: flex; gap: 8px; padding: 0 26px 16px; }
+  .field {
+    height: 34px; padding: 0 11px; border-radius: 7px; background: var(--hull);
+    border: 1px solid var(--rim); display: flex; align-items: center;
+    font-size: 12.5px; color: var(--bone);
+  }
+  .field.ph { color: rgba(242,234,221,.56); }
+  .field.w1 { width: 178px; }
+  .field.w2 { flex: 1; }
+  .caret { width: 1.5px; height: 15px; background: var(--signal); margin: 0 1px; }
+
+  .rule { height: 1px; background: var(--rim); }
+
+  .listhead { display: flex; align-items: center; gap: 14px; padding: 11px 26px 6px; font-family: var(--mono); font-size: 9.5px; color: var(--bone-faint); letter-spacing: .07em; }
+  .row {
+    display: flex; align-items: center; gap: 14px; height: 42px; padding: 0 26px;
+    position: relative; cursor: default;
+  }
+  .row + .row { box-shadow: inset 0 1px 0 rgba(242,234,221,.05); }
+  .row.on { background: linear-gradient(90deg, rgba(255,107,44,.12), rgba(255,107,44,.02) 55%, transparent); }
+  
+  .row.on::before { content:""; position:absolute; left:0; top:0; bottom:0; width:2px; background:var(--signal); }
+  .num { position: relative; width: 30px; height: 26px; display: grid; place-items: center; }
+  .num svg { position: absolute; inset: 0; }
+  .num span { position: relative; font-family: var(--mono); font-size: 8.5px; font-weight: 600; color: var(--bone-dim); }
+  .row.on .num span { color: var(--bone); }
+  .ttl { font-size: 13px; font-weight: 500; }
+  .host { font-family: var(--mono); font-size: 10.5px; color: var(--bone-dim); }
+  .acts { display: flex; gap: 1px; opacity: 0; }
+  .row.on .acts { opacity: 1; }
+  .ico { width: 25px; height: 23px; border-radius: 5px; display: grid; place-items: center; color: var(--bone-dim); font-size: 11px; font-family: var(--mono); }
+  .ico:hover { background: rgba(242,234,221,.07); color: var(--bone); }
+  .foot { display: flex; align-items: center; gap: 8px; padding: 10px 26px; border-top: 1px solid var(--rim); font-size: 11px; color: var(--bone-faint); margin-top: 8px; }
+  .pg { width: 30px; text-align: right; font-family: var(--mono); font-size: 10.5px; color: var(--bone-faint); }
+  .row:not(.on) .pg { color: var(--bone-faint); }
+  .col { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+  .hint { font-family: var(--mono); font-size: 9.5px; color: var(--bone-faint); letter-spacing: .02em; }
+  .btn.sm { padding: 4px 9px; font-size: 10.5px; }
+  .status { font-size: 10.5px; color: var(--bone-faint); margin-right: 4px; }
+
+  .onb { width: 760px; }
+  .onb .content { display: flex; min-height: 340px; }
+  .onb .art { width: 250px; display: grid; place-items: center; border-right: 1px solid var(--rim);
+      background: radial-gradient(80% 60% at 50% 35%, rgba(255,107,44,.09), transparent 72%), #08191d; }
+  .onb .pad { flex: 1; padding: 26px 32px 20px; }
+  .eyebrow { font-family: var(--mono); font-size: 10px; color: var(--signal); letter-spacing: .06em; }
+  .onb h2 { font-size: 24px; line-height: 1.18; margin: 8px 0 10px; letter-spacing: -.02em; font-weight: 600; }
+  .onb p { font-size: 12.8px; line-height: 1.6; color: var(--bone-dim); margin: 0 0 14px; }
+  .onb p b { color: var(--bone); font-weight: 600; }
+  .callout { border: 1px solid var(--rim); border-left: 2px solid var(--signal); border-radius: 6px; padding: 12px 14px; background: rgba(255,107,44,.045); margin-bottom: 16px; }
+  .callout .k { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+  .callout p { font-size: 11.6px; margin: 0; line-height: 1.55; }
+  .steps { display: flex; gap: 5px; align-items: center; }
+  .pip { width: 20px; height: 3px; border-radius: 2px; background: rgba(242,234,221,.15); }
+  .pip.on { background: var(--signal); }
+  .onb .actions { display: flex; align-items: center; gap: 9px; margin-top: 20px; }
+
+  .hidden { display: none !important; }
+  .hashhint { position: fixed; left: 16px; bottom: 12px; font-family: var(--mono); font-size: 10px; color: rgba(242,234,221,.22); }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="desktop" id="desktop">
+    <div class="win">
+      <div class="bar"><div class="dot"></div><div class="dot"></div><div class="dot"></div><div class="nav"></div></div>
+      <div class="body"><div class="h"></div><div class="ln"></div><div class="ln"></div><div class="ln s"></div><div class="ln"></div><div class="ln s"></div></div>
+    </div>
+  </div>
+  <canvas id="radial"></canvas>
+
+  <!-- ================= MANAGER ================= -->
+  <div class="frame hidden" id="manager">
+    <div class="titlebar"><div class="tl r"></div><div class="tl y"></div><div class="tl g"></div><div class="name">Safari Radial</div></div>
+    <div class="m-head">
+      <svg class="mini" id="mini" viewBox="-58 -58 116 116"></svg>
+      <div>
+        <div class="wordmark">Safari Radial<span class="dot">.</span></div>
+        <div class="meta"><b>23</b> slots &nbsp;·&nbsp; <b>3</b> pages &nbsp;·&nbsp; <span class="kbd">⌘E</span> opens the dial</div>
+      </div>
+      <div class="spacer"></div>
+      <div class="search"><span>⌕</span><span>Find a bookmark</span><span class="k"><span class="kbd">⌘F</span></span></div>
+      <div class="col">
+        <div class="btn ghost nowrap">Import from Safari</div>
+        <div class="hint">Safari import is off</div>
+      </div>
+      <div class="btn ghost gear" title="Settings — change the shortcut">⚙</div>
+    </div>
+    <div class="addbar">
+      <div class="field w1 ph">Name (optional)</div>
+      <div class="field w2"><span>https://</span><span class="caret"></span><span style="color:rgba(242,234,221,.34)">&nbsp;paste a link, or type a domain</span></div>
+      <div class="btn signal">Add bookmark</div>
+    </div>
+    <div class="rule"></div>
+    <div class="listhead"><span style="width:30px;text-align:right">SLOT</span><span>BOOKMARK</span><span class="spacer"></span><span style="width:30px;text-align:right">PAGE</span><span style="width:124px"></span></div>
+    <div class="row on"><div class="num"><svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path d="M11.56,9.05 L9.07,2.19 A11.5,11.5 0 0 1 16.93,2.19 L14.44,9.05 A4.2,4.2 0 0 0 11.56,9.05 Z" fill="rgba(255,107,44,.85)" stroke="rgba(255,107,44,.95)" stroke-width=".6"/><path d="M14.44,9.05 L16.93,2.19 A11.5,11.5 0 0 1 22.96,7.25 L16.64,10.90 A4.2,4.2 0 0 0 14.44,9.05 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M16.64,10.90 L22.96,7.25 A11.5,11.5 0 0 1 24.33,15.00 L17.14,13.73 A4.2,4.2 0 0 0 16.64,10.90 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M17.14,13.73 L24.33,15.00 A11.5,11.5 0 0 1 20.39,21.81 L15.70,16.22 A4.2,4.2 0 0 0 17.14,13.73 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M15.70,16.22 L20.39,21.81 A11.5,11.5 0 0 1 13.00,24.50 L13.00,17.20 A4.2,4.2 0 0 0 15.70,16.22 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M13.00,17.20 L13.00,24.50 A11.5,11.5 0 0 1 5.61,21.81 L10.30,16.22 A4.2,4.2 0 0 0 13.00,17.20 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M10.30,16.22 L5.61,21.81 A11.5,11.5 0 0 1 1.67,15.00 L8.86,13.73 A4.2,4.2 0 0 0 10.30,16.22 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M8.86,13.73 L1.67,15.00 A11.5,11.5 0 0 1 3.04,7.25 L9.36,10.90 A4.2,4.2 0 0 0 8.86,13.73 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M9.36,10.90 L3.04,7.25 A11.5,11.5 0 0 1 9.07,2.19 L11.56,9.05 A4.2,4.2 0 0 0 9.36,10.90 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/></svg><span>1</span></div><div class="ttl" style="width:150px">Teams</div><div class="host" style="flex:1">teams.cloud.microsoft</div><div class="pg">1</div><div class="acts"><div class="ico">↑</div><div class="ico">↓</div><div class="ico">↗</div><div class="ico">✎</div><div class="ico" style="color:var(--alarm)">✕</div></div></div>
+    <div class="row"><div class="num"><svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path d="M11.56,9.05 L9.07,2.19 A11.5,11.5 0 0 1 16.93,2.19 L14.44,9.05 A4.2,4.2 0 0 0 11.56,9.05 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M14.44,9.05 L16.93,2.19 A11.5,11.5 0 0 1 22.96,7.25 L16.64,10.90 A4.2,4.2 0 0 0 14.44,9.05 Z" fill="rgba(255,107,44,.85)" stroke="rgba(255,107,44,.95)" stroke-width=".6"/><path d="M16.64,10.90 L22.96,7.25 A11.5,11.5 0 0 1 24.33,15.00 L17.14,13.73 A4.2,4.2 0 0 0 16.64,10.90 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M17.14,13.73 L24.33,15.00 A11.5,11.5 0 0 1 20.39,21.81 L15.70,16.22 A4.2,4.2 0 0 0 17.14,13.73 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M15.70,16.22 L20.39,21.81 A11.5,11.5 0 0 1 13.00,24.50 L13.00,17.20 A4.2,4.2 0 0 0 15.70,16.22 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M13.00,17.20 L13.00,24.50 A11.5,11.5 0 0 1 5.61,21.81 L10.30,16.22 A4.2,4.2 0 0 0 13.00,17.20 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M10.30,16.22 L5.61,21.81 A11.5,11.5 0 0 1 1.67,15.00 L8.86,13.73 A4.2,4.2 0 0 0 10.30,16.22 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M8.86,13.73 L1.67,15.00 A11.5,11.5 0 0 1 3.04,7.25 L9.36,10.90 A4.2,4.2 0 0 0 8.86,13.73 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M9.36,10.90 L3.04,7.25 A11.5,11.5 0 0 1 9.07,2.19 L11.56,9.05 A4.2,4.2 0 0 0 9.36,10.90 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/></svg><span>2</span></div><div class="ttl" style="width:150px">Gmail</div><div class="host" style="flex:1">mail.google.com</div><div class="pg">1</div><div class="acts"><div class="ico">↑</div><div class="ico">↓</div><div class="ico">↗</div><div class="ico">✎</div><div class="ico">✕</div></div></div>
+    <div class="row"><div class="num"><svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path d="M11.56,9.05 L9.07,2.19 A11.5,11.5 0 0 1 16.93,2.19 L14.44,9.05 A4.2,4.2 0 0 0 11.56,9.05 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M14.44,9.05 L16.93,2.19 A11.5,11.5 0 0 1 22.96,7.25 L16.64,10.90 A4.2,4.2 0 0 0 14.44,9.05 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M16.64,10.90 L22.96,7.25 A11.5,11.5 0 0 1 24.33,15.00 L17.14,13.73 A4.2,4.2 0 0 0 16.64,10.90 Z" fill="rgba(255,107,44,.85)" stroke="rgba(255,107,44,.95)" stroke-width=".6"/><path d="M17.14,13.73 L24.33,15.00 A11.5,11.5 0 0 1 20.39,21.81 L15.70,16.22 A4.2,4.2 0 0 0 17.14,13.73 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M15.70,16.22 L20.39,21.81 A11.5,11.5 0 0 1 13.00,24.50 L13.00,17.20 A4.2,4.2 0 0 0 15.70,16.22 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M13.00,17.20 L13.00,24.50 A11.5,11.5 0 0 1 5.61,21.81 L10.30,16.22 A4.2,4.2 0 0 0 13.00,17.20 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M10.30,16.22 L5.61,21.81 A11.5,11.5 0 0 1 1.67,15.00 L8.86,13.73 A4.2,4.2 0 0 0 10.30,16.22 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M8.86,13.73 L1.67,15.00 A11.5,11.5 0 0 1 3.04,7.25 L9.36,10.90 A4.2,4.2 0 0 0 8.86,13.73 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M9.36,10.90 L3.04,7.25 A11.5,11.5 0 0 1 9.07,2.19 L11.56,9.05 A4.2,4.2 0 0 0 9.36,10.90 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/></svg><span>3</span></div><div class="ttl" style="width:150px">Outlook</div><div class="host" style="flex:1">outlook.office.com</div><div class="pg">1</div><div class="acts"><div class="ico">↑</div><div class="ico">↓</div><div class="ico">↗</div><div class="ico">✎</div><div class="ico">✕</div></div></div>
+    <div class="row"><div class="num"><svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path d="M11.56,9.05 L9.07,2.19 A11.5,11.5 0 0 1 16.93,2.19 L14.44,9.05 A4.2,4.2 0 0 0 11.56,9.05 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M14.44,9.05 L16.93,2.19 A11.5,11.5 0 0 1 22.96,7.25 L16.64,10.90 A4.2,4.2 0 0 0 14.44,9.05 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M16.64,10.90 L22.96,7.25 A11.5,11.5 0 0 1 24.33,15.00 L17.14,13.73 A4.2,4.2 0 0 0 16.64,10.90 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M17.14,13.73 L24.33,15.00 A11.5,11.5 0 0 1 20.39,21.81 L15.70,16.22 A4.2,4.2 0 0 0 17.14,13.73 Z" fill="rgba(255,107,44,.85)" stroke="rgba(255,107,44,.95)" stroke-width=".6"/><path d="M15.70,16.22 L20.39,21.81 A11.5,11.5 0 0 1 13.00,24.50 L13.00,17.20 A4.2,4.2 0 0 0 15.70,16.22 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M13.00,17.20 L13.00,24.50 A11.5,11.5 0 0 1 5.61,21.81 L10.30,16.22 A4.2,4.2 0 0 0 13.00,17.20 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M10.30,16.22 L5.61,21.81 A11.5,11.5 0 0 1 1.67,15.00 L8.86,13.73 A4.2,4.2 0 0 0 10.30,16.22 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M8.86,13.73 L1.67,15.00 A11.5,11.5 0 0 1 3.04,7.25 L9.36,10.90 A4.2,4.2 0 0 0 8.86,13.73 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M9.36,10.90 L3.04,7.25 A11.5,11.5 0 0 1 9.07,2.19 L11.56,9.05 A4.2,4.2 0 0 0 9.36,10.90 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/></svg><span>4</span></div><div class="ttl" style="width:150px">Vex</div><div class="host" style="flex:1">localhost:18789</div><div class="pg">1</div><div class="acts"><div class="ico">↑</div><div class="ico">↓</div><div class="ico">↗</div><div class="ico">✎</div><div class="ico">✕</div></div></div>
+    <div class="row"><div class="num"><svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path d="M11.56,9.05 L9.07,2.19 A11.5,11.5 0 0 1 16.93,2.19 L14.44,9.05 A4.2,4.2 0 0 0 11.56,9.05 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M14.44,9.05 L16.93,2.19 A11.5,11.5 0 0 1 22.96,7.25 L16.64,10.90 A4.2,4.2 0 0 0 14.44,9.05 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M16.64,10.90 L22.96,7.25 A11.5,11.5 0 0 1 24.33,15.00 L17.14,13.73 A4.2,4.2 0 0 0 16.64,10.90 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M17.14,13.73 L24.33,15.00 A11.5,11.5 0 0 1 20.39,21.81 L15.70,16.22 A4.2,4.2 0 0 0 17.14,13.73 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M15.70,16.22 L20.39,21.81 A11.5,11.5 0 0 1 13.00,24.50 L13.00,17.20 A4.2,4.2 0 0 0 15.70,16.22 Z" fill="rgba(255,107,44,.85)" stroke="rgba(255,107,44,.95)" stroke-width=".6"/><path d="M13.00,17.20 L13.00,24.50 A11.5,11.5 0 0 1 5.61,21.81 L10.30,16.22 A4.2,4.2 0 0 0 13.00,17.20 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M10.30,16.22 L5.61,21.81 A11.5,11.5 0 0 1 1.67,15.00 L8.86,13.73 A4.2,4.2 0 0 0 10.30,16.22 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M8.86,13.73 L1.67,15.00 A11.5,11.5 0 0 1 3.04,7.25 L9.36,10.90 A4.2,4.2 0 0 0 8.86,13.73 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M9.36,10.90 L3.04,7.25 A11.5,11.5 0 0 1 9.07,2.19 L11.56,9.05 A4.2,4.2 0 0 0 9.36,10.90 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/></svg><span>5</span></div><div class="ttl" style="width:150px">GitHub</div><div class="host" style="flex:1">github.com</div><div class="pg">1</div><div class="acts"><div class="ico">↑</div><div class="ico">↓</div><div class="ico">↗</div><div class="ico">✎</div><div class="ico">✕</div></div></div>
+    <div class="row"><div class="num"><svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path d="M11.56,9.05 L9.07,2.19 A11.5,11.5 0 0 1 16.93,2.19 L14.44,9.05 A4.2,4.2 0 0 0 11.56,9.05 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M14.44,9.05 L16.93,2.19 A11.5,11.5 0 0 1 22.96,7.25 L16.64,10.90 A4.2,4.2 0 0 0 14.44,9.05 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M16.64,10.90 L22.96,7.25 A11.5,11.5 0 0 1 24.33,15.00 L17.14,13.73 A4.2,4.2 0 0 0 16.64,10.90 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M17.14,13.73 L24.33,15.00 A11.5,11.5 0 0 1 20.39,21.81 L15.70,16.22 A4.2,4.2 0 0 0 17.14,13.73 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M15.70,16.22 L20.39,21.81 A11.5,11.5 0 0 1 13.00,24.50 L13.00,17.20 A4.2,4.2 0 0 0 15.70,16.22 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M13.00,17.20 L13.00,24.50 A11.5,11.5 0 0 1 5.61,21.81 L10.30,16.22 A4.2,4.2 0 0 0 13.00,17.20 Z" fill="rgba(255,107,44,.85)" stroke="rgba(255,107,44,.95)" stroke-width=".6"/><path d="M10.30,16.22 L5.61,21.81 A11.5,11.5 0 0 1 1.67,15.00 L8.86,13.73 A4.2,4.2 0 0 0 10.30,16.22 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M8.86,13.73 L1.67,15.00 A11.5,11.5 0 0 1 3.04,7.25 L9.36,10.90 A4.2,4.2 0 0 0 8.86,13.73 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M9.36,10.90 L3.04,7.25 A11.5,11.5 0 0 1 9.07,2.19 L11.56,9.05 A4.2,4.2 0 0 0 9.36,10.90 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/></svg><span>6</span></div><div class="ttl" style="width:150px">Vercel</div><div class="host" style="flex:1">vercel.com</div><div class="pg">1</div><div class="acts"><div class="ico">↑</div><div class="ico">↓</div><div class="ico">↗</div><div class="ico">✎</div><div class="ico">✕</div></div></div>
+    <div class="row"><div class="num"><svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path d="M11.56,9.05 L9.07,2.19 A11.5,11.5 0 0 1 16.93,2.19 L14.44,9.05 A4.2,4.2 0 0 0 11.56,9.05 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M14.44,9.05 L16.93,2.19 A11.5,11.5 0 0 1 22.96,7.25 L16.64,10.90 A4.2,4.2 0 0 0 14.44,9.05 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M16.64,10.90 L22.96,7.25 A11.5,11.5 0 0 1 24.33,15.00 L17.14,13.73 A4.2,4.2 0 0 0 16.64,10.90 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M17.14,13.73 L24.33,15.00 A11.5,11.5 0 0 1 20.39,21.81 L15.70,16.22 A4.2,4.2 0 0 0 17.14,13.73 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M15.70,16.22 L20.39,21.81 A11.5,11.5 0 0 1 13.00,24.50 L13.00,17.20 A4.2,4.2 0 0 0 15.70,16.22 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M13.00,17.20 L13.00,24.50 A11.5,11.5 0 0 1 5.61,21.81 L10.30,16.22 A4.2,4.2 0 0 0 13.00,17.20 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M10.30,16.22 L5.61,21.81 A11.5,11.5 0 0 1 1.67,15.00 L8.86,13.73 A4.2,4.2 0 0 0 10.30,16.22 Z" fill="rgba(255,107,44,.85)" stroke="rgba(255,107,44,.95)" stroke-width=".6"/><path d="M8.86,13.73 L1.67,15.00 A11.5,11.5 0 0 1 3.04,7.25 L9.36,10.90 A4.2,4.2 0 0 0 8.86,13.73 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M9.36,10.90 L3.04,7.25 A11.5,11.5 0 0 1 9.07,2.19 L11.56,9.05 A4.2,4.2 0 0 0 9.36,10.90 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/></svg><span>7</span></div><div class="ttl" style="width:150px">OpenRouter</div><div class="host" style="flex:1">openrouter.ai</div><div class="pg">1</div><div class="acts"><div class="ico">↑</div><div class="ico">↓</div><div class="ico">↗</div><div class="ico">✎</div><div class="ico">✕</div></div></div>
+    <div class="row"><div class="num"><svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><path d="M11.56,9.05 L9.07,2.19 A11.5,11.5 0 0 1 16.93,2.19 L14.44,9.05 A4.2,4.2 0 0 0 11.56,9.05 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M14.44,9.05 L16.93,2.19 A11.5,11.5 0 0 1 22.96,7.25 L16.64,10.90 A4.2,4.2 0 0 0 14.44,9.05 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M16.64,10.90 L22.96,7.25 A11.5,11.5 0 0 1 24.33,15.00 L17.14,13.73 A4.2,4.2 0 0 0 16.64,10.90 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M17.14,13.73 L24.33,15.00 A11.5,11.5 0 0 1 20.39,21.81 L15.70,16.22 A4.2,4.2 0 0 0 17.14,13.73 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M15.70,16.22 L20.39,21.81 A11.5,11.5 0 0 1 13.00,24.50 L13.00,17.20 A4.2,4.2 0 0 0 15.70,16.22 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M13.00,17.20 L13.00,24.50 A11.5,11.5 0 0 1 5.61,21.81 L10.30,16.22 A4.2,4.2 0 0 0 13.00,17.20 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M10.30,16.22 L5.61,21.81 A11.5,11.5 0 0 1 1.67,15.00 L8.86,13.73 A4.2,4.2 0 0 0 10.30,16.22 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/><path d="M8.86,13.73 L1.67,15.00 A11.5,11.5 0 0 1 3.04,7.25 L9.36,10.90 A4.2,4.2 0 0 0 8.86,13.73 Z" fill="rgba(255,107,44,.85)" stroke="rgba(255,107,44,.95)" stroke-width=".6"/><path d="M9.36,10.90 L3.04,7.25 A11.5,11.5 0 0 1 9.07,2.19 L11.56,9.05 A4.2,4.2 0 0 0 9.36,10.90 Z" fill="rgba(242,234,221,.10)" stroke="rgba(242,234,221,.13)" stroke-width=".6"/></svg><span>8</span></div><div class="ttl" style="width:150px">Snapchat</div><div class="host" style="flex:1">snapchat.com</div><div class="pg">1</div><div class="acts"><div class="ico">↑</div><div class="ico">↓</div><div class="ico">↗</div><div class="ico">✎</div><div class="ico">✕</div></div></div>
+    <div class="foot"><span>Row order is the dial. Row 1 sits at twelve o'clock.</span><span class="spacer"></span><span class="status">Safari import is off</span><div class="btn ghost sm">Import needs Full Disk Access</div><span class="kbd">⌘N</span>&nbsp;add &nbsp;<span class="kbd">⌘,</span>&nbsp;settings</div>
+  </div>
+
+  <!-- ================= ONBOARDING ================= -->
+  <div class="frame onb hidden" id="onboarding">
+    <div class="titlebar"><div class="tl r"></div><div class="tl y"></div><div class="tl g"></div><div class="name">Welcome to Safari Radial</div></div>
+    <div class="content">
+      <div class="art"><canvas id="onbRadial" width="196" height="196" style="width:196px;height:196px"></canvas></div>
+      <div class="pad">
+        <div class="eyebrow">STEP 2 OF 3 · OPTIONAL</div>
+        <h2>Bring your Safari bookmarks along</h2>
+        <p>Safari keeps bookmarks in a system-protected file. Reading it needs <b>Full Disk Access</b>. You can grant it now, or skip it and never think about it again.</p>
+        <div class="callout">
+          <div class="k">Full Disk Access is optional</div>
+          <p>Adding links by hand, reordering, the shortcut, and every setting work exactly the same without it. It only switches on this one import button.</p>
+        </div>
+        <div class="actions">
+          <div class="btn signal">Open Full Disk Access</div>
+          <div class="btn ghost">Not now</div>
+          <div class="spacer"></div>
+          <div class="steps"><div class="pip on"></div><div class="pip on"></div><div class="pip"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="hashhint">#radial · #manager · #onboarding · #solo · #two · #anim</div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Mirrors Sources/RadialCore/RadialLayout.swift and the AppKit renderer, so the
+// look can be reviewed off-Mac. Development aid only, not shipped.
+// ---------------------------------------------------------------------------
+const C = { signal:[255,107,44] };
+const rgba = (c,a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+const mixC = (a,b,t) => [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
+const rgb = c => `rgb(${c.map(Math.round).join(',')})`;
+
+const BOOKMARKS = [
+  { t: "Teams",      s: "teams.cloud.microsoft" },
+  { t: "Gmail",      s: "mail.google.com" },
+  { t: "Outlook",    s: "outlook.office.com" },
+  { t: "Vex",        s: "localhost:18789" },
+  { t: "GitHub",     s: "github.com" },
+  { t: "Vercel",     s: "vercel.com" },
+  { t: "OpenRouter", s: "openrouter.ai" },
+  { t: "Snapchat",   s: "snapchat.com" },
+  { t: "Linear",     s: "linear.app" },
+];
+
+class Spring {
+  constructor(v,k=380,d=28){ this.value=v; this.target=v; this.v=0; this.k=k; this.d=d; }
+  get moving(){ return Math.abs(this.target-this.value)>0.0005 || Math.abs(this.v)>0.0005; }
+  step(dt){
+    const c = Math.min(dt, 1/30), n = Math.max(1, Math.ceil(c/(1/240))), h = c/n;
+    for (let i=0;i<n;i++){ const f = this.k*(this.target-this.value) - this.d*this.v; this.v += f*h; this.value += this.v*h; }
+    if (!this.moving){ this.value = this.target; this.v = 0; }
+    return this.value;
+  }
+  snap(v){ this.value=v; this.target=v; this.v=0; }
+}
+const E = {
+  outCubic: t => 1-Math.pow(1-t,3),
+  outQuint: t => 1-Math.pow(1-t,5),
+  outBack: (t,c=1.7)=>{ const p=t-1; return 1+(c+1)*p*p*p+c*p*p; }
+};
+
+function makeLayout(n, R, hubR){
+  const centerR = hubR;
+  const innerR = centerR + Math.max(13, R*0.085);
+  const outerR = R;
+  const step = n > 0 ? 2*Math.PI/n : 0;
+  const bezelR = outerR + 22;
+  const labelR = innerR + (outerR-innerR)*0.50;
+  const depth = outerR - innerR;
+  const pt = (r,a) => ({ x: r*Math.sin(a), y: -r*Math.cos(a) });
+  const norm = a => { const t=2*Math.PI; let v=a%t; if (v<0) v+=t; return v; };
+  const angle = i => i*step;
+
+  function sliceContains(p, i, inset){
+    const r = Math.hypot(p.x,p.y);
+    if (r < innerR+inset || r > outerR-inset) return false;
+    if (n <= 1) return true;
+    const a = norm(Math.atan2(p.x,-p.y));
+    const d = Math.abs(a - norm(angle(i)));
+    const wrapped = Math.min(d, 2*Math.PI-d);
+    return wrapped <= Math.max(0, step/2 - inset/Math.max(r,1));
+  }
+  function labelWidth(i, radius, height, pad){
+    const anchor = pt(radius, angle(i));
+    const hh = height/2;
+    const fits = w => {
+      for (const dx of [-w/2,w/2]) for (const dy of [-hh,hh])
+        if (!sliceContains({x:anchor.x+dx, y:anchor.y+dy}, i, pad)) return false;
+      return true;
+    };
+    // Bounded by the chord at the label radius: an unbounded probe "fits" at any width
+    // inside a half-disc, which is how a 2-slice dial ended up with 400px labels.
+    let lo = 0, hi = Math.min(2*radius*Math.sin(Math.min(step, Math.PI)/2), 260);
+    if (hi <= 0) return 0;
+    if (fits(hi)) return hi;
+    for (let k=0;k<18;k++){ const mid=(lo+hi)/2; if (fits(mid)) lo=mid; else hi=mid; }
+    return lo;
+  }
+  function drawable(i, inset){
+    if (n === 1) return { start: 0, sweep: 2*Math.PI };
+    const start = norm(angle(i) - step/2);
+    const sw = step;
+    const cl = Math.min(Math.max(0,inset), Math.max(0, sw/2-0.001));
+    return { start: norm(start+cl), sweep: sw-cl*2 };
+  }
+  return { n,R,centerR,innerR,outerR,bezelR,labelR,depth,step,pt,norm,angle,sliceContains,labelWidth,drawable };
+}
+
+function drawDial(canvas, o){
+  const ctx = canvas.getContext('2d');
+  const dpr = Math.min(2, window.devicePixelRatio||1);
+  canvas.width = o.w*dpr; canvas.height = o.h*dpr;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,o.w,o.h);
+
+  const L = makeLayout(o.count, o.R, o.hubR);
+  const list = o.bookmarks.slice(0,o.count);
+  const mono = getComputedStyle(document.body).getPropertyValue('--mono');
+  const display = getComputedStyle(document.body).getPropertyValue('--display');
+  const open = o.open, content = o.content;
+
+  if (o.scrim){
+    const g = ctx.createRadialGradient(o.cx,o.cy,0,o.cx,o.cy,Math.max(o.R*1.9,320));
+    g.addColorStop(0,   `rgba(3,9,11,${0.78*open})`);
+    g.addColorStop(0.55,`rgba(3,9,11,${0.42*open})`);
+    g.addColorStop(1,   'rgba(3,9,11,0)');
+    ctx.fillStyle = g; ctx.fillRect(0,0,o.w,o.h);
+  }
+
+  ctx.save();
+  ctx.translate(o.cx,o.cy);
+  const sc = 0.88 + 0.12*E.outBack(Math.min(1,open), 1.3);
+  ctx.scale(sc,sc);
+  ctx.globalAlpha = content;
+
+  const isSolo = o.count === 1;
+
+  if (isSolo) drawSoloTile(ctx, o, L, list[0], display, mono);
+  else {
+    for (let i=0;i<o.count;i++) if (i !== o.hover) drawSlice(ctx, o, L, list[i], i, display, mono, 0);
+    if (o.hover !== null && o.hover !== undefined && list[o.hover])
+      drawSlice(ctx, o, L, list[o.hover], o.hover, display, mono, 1);
+  }
+
+  if (o.showNumbers && !isSolo) drawBezel(ctx, o, L, mono);
+  if (!isSolo) drawHub(ctx, o, L, mono);
+
+  if (o.sweep > 0.002 && o.sweep < 0.998){
+    const t = o.sweep;
+    const end = -Math.PI/2 + 2*Math.PI*E.outQuint(t);
+    ctx.beginPath(); ctx.arc(0,0,L.outerR+8,-Math.PI/2,end);
+    ctx.strokeStyle = rgba(C.signal, 0.85*(1-E.outCubic(t)));
+    ctx.lineWidth = 2; ctx.lineCap='round'; ctx.stroke();
+    const tipP = L.pt(L.outerR+8, end+Math.PI/2);
+    ctx.beginPath(); ctx.arc(tipP.x,tipP.y,2.4,0,2*Math.PI);
+    ctx.fillStyle = rgba(C.signal, 1-E.outCubic(t)); ctx.fill();
+  }
+
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalAlpha = content;
+  if (o.pages > 1){
+    const gap = 15, y = o.cy + o.R + 74;
+    const totalW = (o.pages-1)*gap;
+    for (let p=0;p<o.pages;p++){
+      const x = o.cx - totalW/2 + p*gap, on = p===o.page;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.font = `${on?'600':'500'} 10px ${mono}`;
+      ctx.fillStyle = on ? rgba(C.signal,1) : 'rgba(242,234,221,0.26)';
+      ctx.fillText(String(p+1), x, y);
+      if (on){ ctx.beginPath(); ctx.moveTo(x-4,y+8); ctx.lineTo(x+4,y+8); ctx.strokeStyle=rgba(C.signal,.8); ctx.lineWidth=1.5; ctx.stroke(); }
+    }
+  }
+  if (o.hint){
+    const keys = o.count===1 ? '1' : `1–${o.count}`;
+    const labels = isSolo ? [keys, 'click', 'esc'] : (o.pages>1 ? ['← →', keys, 'esc'] : [keys, 'esc']);
+    const y = o.cy + (isSolo ? 72 : o.R + (o.pages>1 ? 104 : 66));
+    ctx.font = `500 10.5px ${mono}`;
+    const ws = labels.map(l=>Math.max(20, ctx.measureText(l).width+14));
+    const gap = 7, total = ws.reduce((a,b)=>a+b,0)+gap*(labels.length-1);
+    let x = o.cx-total/2;
+    labels.forEach((l,i)=>{
+      const w=ws[i], h=20;
+      ctx.beginPath(); roundRect(ctx,x,y-h/2,w,h,5);
+      ctx.fillStyle='rgba(242,234,221,0.05)'; ctx.fill();
+      ctx.strokeStyle='rgba(242,234,221,0.09)'; ctx.lineWidth=1; ctx.stroke();
+      ctx.fillStyle='rgba(242,234,221,0.60)'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(l, x+w/2, y+0.5);
+      x += w+gap;
+    });
+  }
+  ctx.restore();
+}
+
+// A machined bezel: 60 fine ticks, a major tick at every slice boundary, and the
+// slice number engraved between them. This is the dial's signature.
+function drawBezel(ctx, o, L, mono){
+  const ticks = 60;
+  // A translucent band under the numerals: the ring's own material, extended, so a number
+  // stays readable over a white browser window or a photo wallpaper. Without it the digits
+  // sat directly on whatever was behind the dial and vanished.
+  if (o.showNumbers){
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(0,0,L.outerR+21,0,2*Math.PI);
+    ctx.arc(0,0,L.outerR+41,0,2*Math.PI,true);
+    ctx.fillStyle = 'rgba(3,12,15,0.72)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(242,234,221,0.10)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(0,0,L.outerR+21,0,2*Math.PI); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0,0,L.outerR+41,0,2*Math.PI); ctx.stroke();
+    ctx.restore();
+  }
+  for (let k=0;k<ticks;k++){
+    const a = (k/ticks)*2*Math.PI;
+    const major = o.count > 1 && Math.abs(((a % (2*Math.PI)) / L.step) - Math.round(a / L.step)) < 0.02;
+    const len = major ? 9 : 4;
+    const q0 = L.pt(L.outerR+10, a), q1 = L.pt(L.outerR+10+len, a);
+    ctx.beginPath(); ctx.moveTo(q0.x,q0.y); ctx.lineTo(q1.x,q1.y);
+    ctx.strokeStyle = major ? 'rgba(242,234,221,0.30)' : 'rgba(242,234,221,0.11)';
+    ctx.lineWidth = 1; ctx.stroke();
+  }
+
+  if (o.showNumbers){
+    for (let i=0;i<o.count;i++){
+      const h = o.hover===i ? 1 : 0;
+      const p = L.pt(L.outerR+31, L.angle(i));
+      ctx.save();
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.font = `${h>0.3?'600':'500'} 10.5px ${mono}`;
+      ctx.fillStyle = h>0.3 ? rgba(C.signal,0.98) : 'rgba(242,234,221,0.78)';
+      ctx.fillText(String(i+1), p.x, p.y);
+      ctx.restore();
+    }
+  }
+}
+
+function drawSlice(ctx, o, L, b, i, display, mono, raised){
+  if (!b) return;
+  const h = o.hover===i ? 1 : 0;
+  const press = o.pressed===i ? 1 : 0;
+  const gap = Math.min(0.014, L.step*0.045);
+  const d = L.drawable(i, gap - h*0.003 - press*0.003);
+  const inner = L.innerR + 2 - h*3;
+  const outer = L.outerR - 2 - press*4;
+
+  // warm light spilling out from behind the aimed wedge
+  if (h > 0.02){
+    const a = L.angle(i);
+    const gc = L.pt((inner+outer)/2, a);
+    const gl = ctx.createRadialGradient(gc.x,gc.y,inner*0.4,gc.x,gc.y,outer+30);
+    gl.addColorStop(0, rgba(C.signal, 0.13*h));
+    gl.addColorStop(1, rgba(C.signal, 0));
+    ctx.fillStyle = gl;
+    ctx.fillRect(-outer-40,-outer-40,(outer+40)*2,(outer+40)*2);
+  }
+
+  ctx.save();
+  if (h > 0.01){
+    const a = L.angle(i);
+    ctx.translate(Math.sin(a)*7*h, -Math.cos(a)*7*h);
+    ctx.shadowColor = `rgba(0,0,0,${0.55*h})`;
+    ctx.shadowBlur = 18*h;
+    ctx.shadowOffsetY = 4*h;
+  }
+  ctx.beginPath(); ctx.clip(wedgePath(ctx, d.start, d.sweep, inner, outer, L));
+  const a0 = L.pt(inner, L.angle(i)), a1 = L.pt(outer, L.angle(i));
+  const g = ctx.createLinearGradient(a0.x,a0.y,a1.x,a1.y);
+  g.addColorStop(0, rgb(mixC([9,28,33],[20,60,64], h*0.98)));
+  g.addColorStop(0.72, rgb(mixC([15,39,45],[31,80,82], h*0.98)));
+  g.addColorStop(1, rgb(mixC([19,46,52],[62,92,86], h*0.98)));
+  ctx.fillStyle = g;
+  ctx.fillRect(-L.outerR-4,-L.outerR-4,(L.outerR+4)*2,(L.outerR+4)*2);
+  const sheen = ctx.createLinearGradient(a0.x,a0.y,a1.x,a1.y);
+  sheen.addColorStop(0,'rgba(255,255,255,0)');
+  sheen.addColorStop(0.75,`rgba(255,255,255,${0.010+0.055*h})`);
+  sheen.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle = sheen;
+  ctx.fillRect(-L.outerR-4,-L.outerR-4,(L.outerR+4)*2,(L.outerR+4)*2);
+  ctx.restore();
+
+  // the same lift applies to the edge and the label, so the slice moves as one piece
+  ctx.save();
+  if (h > 0.01){ const a = L.angle(i); ctx.translate(Math.sin(a)*7*h, -Math.cos(a)*7*h); }
+  ctx.strokeStyle = h>0.02 ? rgba(C.signal, 0.30+0.45*h) : 'rgba(242,234,221,0.10)';
+  ctx.lineWidth = h>0.02 ? 1.2 : 1;
+  ctx.stroke(wedgePath(ctx, d.start, d.sweep, inner, outer, L));
+  ctx.restore();
+
+  // a signal tick on the rim marks the aimed slice; wide wedges get no rail
+  if (h > 0.01 && o.count > 3){
+    const mid = L.angle(i);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(0,0,outer+5, mid - Math.min(0.16, L.step*0.22), mid + Math.min(0.16, L.step*0.22));
+    ctx.strokeStyle = rgba(C.signal, 0.9*h);
+    ctx.lineWidth = 2; ctx.lineCap='round'; ctx.stroke();
+    ctx.restore();
+  }
+
+  const lift = 4*h;
+  const anchor = L.pt(L.labelR + lift, L.angle(i));
+  const slide = (1-o.content)*9;
+  const maxW = L.labelWidth(i, L.labelR+lift, 34, 7);
+
+  let size = 13;
+  for (const s of [13.5,13,12.5,12,11.5,11,10.5,10]){
+    ctx.font = `600 ${s}px ${display}`;
+    size = s;
+    if (ctx.measureText(b.t).width <= maxW) break;
+  }
+  ctx.font = `600 ${size}px ${display}`;
+  const title = ellipsize(ctx, b.t, maxW);
+  ctx.font = `9.5px ${mono}`;
+  const sub = (b.s && ctx.measureText(b.s).width <= maxW) ? b.s : ellipsize(ctx, b.s, maxW);
+
+  const titleH = size*1.24, subH = 12, gapY = 2;
+  const totalH = titleH + (sub ? gapY+subH : 0);
+  const y = anchor.y + slide - totalH/2;
+
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle = `rgba(242,234,221,${0.93+0.07*h})`;
+  ctx.font = `600 ${size}px ${display}`;
+  ctx.fillText(title, anchor.x, y + titleH/2);
+
+  if (sub){
+    ctx.fillStyle = h>0.4 ? rgba(C.signal, 0.85) : 'rgba(242,234,221,0.44)';
+    ctx.font = `9.5px ${mono}`;
+    ctx.fillText(sub, anchor.x, y + titleH + gapY + subH/2);
+  }
+}
+
+function drawSoloTile(ctx, o, L, b, display, mono){
+  if (!b) return;
+  // One bookmark is still a dial: an arc of the bezel's tick scale wraps the single slot,
+  // and the hub's "this is what 1 does" job moves into a number disc on the card.
+  const w = Math.min(400, Math.max(330, o.R*1.75)), hgt = 96, r = 15;
+  const x = -w/2, y = -hgt/2;
+  const hover = o.hover === 0 ? 1 : 0;
+  const lift = 7*hover;
+
+  // halo ticks, elliptical because the slot is
+  const rx = w/2 + 13, ry = hgt/2 + 15, ticks = 72;
+  const startA = -Math.PI*0.84, sweep = Math.PI*1.68;
+  for (let k=0;k<=ticks;k++){
+    const a = startA + sweep*(k/ticks), major = k%9===0, inset = major?11:6;
+    ctx.beginPath();
+    ctx.moveTo(rx*Math.sin(a), -ry*Math.cos(a));
+    ctx.lineTo((rx+inset)*Math.sin(a), -(ry+inset)*Math.cos(a));
+    ctx.strokeStyle = `rgba(242,234,221,${(major?0.30:0.11)*(0.8+0.8*hover)})`;
+    ctx.lineWidth = 1; ctx.stroke();
+  }
+
+  if (hover) {
+    const gl = ctx.createRadialGradient(0,-lift,20,0,-lift,w*0.78);
+    gl.addColorStop(0, rgba(C.signal, 0.13*hover));
+    gl.addColorStop(1, rgba(C.signal, 0));
+    ctx.fillStyle = gl;
+    const pad = 40;
+    ctx.fillRect(-rx-pad, -ry-pad, (rx+pad)*2, (ry+pad)*2);
+  }
+
+  ctx.save();
+  ctx.translate(0, -lift);
+  ctx.shadowColor = `rgba(0,0,0,${0.5+0.2*hover})`;
+  ctx.shadowBlur = 26 + 12*hover;
+  ctx.shadowOffsetY = 8;
+  ctx.beginPath(); roundRect(ctx, x, y, w, hgt, r);
+  const g = ctx.createLinearGradient(x, y, x+w, y+hgt);
+  g.addColorStop(0, rgb(mixC([10,32,37],[26,72,76], hover)));
+  g.addColorStop(1, rgb(mixC([16,44,50],[44,96,94], hover)));
+  ctx.fillStyle = g; ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.strokeStyle = hover ? rgba(C.signal,.75) : 'rgba(242,234,221,0.13)';
+  ctx.lineWidth = hover ? 1.4 : 1; ctx.stroke();
+  ctx.restore();
+
+  // number disc, drawn like the hub readout
+  const d = 48, cx = x + 24 + d/2, cy = -lift;
+  ctx.beginPath(); ctx.arc(cx, cy, d/2, 0, 2*Math.PI);
+  ctx.fillStyle = 'rgba(5,16,19,0.94)'; ctx.fill();
+  ctx.strokeStyle = hover ? rgba(C.signal,.75) : 'rgba(242,234,221,0.14)';
+  ctx.lineWidth = hover ? 1.4 : 1; ctx.stroke();
+
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.font = `600 19px ${mono}`;
+  ctx.fillStyle = hover ? rgba(C.signal,1) : 'rgba(242,234,221,0.95)';
+  ctx.fillText('1', cx, cy+0.5);
+
+  ctx.beginPath();
+  ctx.moveTo(cx+d/2+16, cy-17); ctx.lineTo(cx+d/2+16, cy+17);
+  ctx.strokeStyle = 'rgba(242,234,221,0.10)'; ctx.lineWidth = 1; ctx.stroke();
+
+  ctx.textAlign='left';
+  const lx = cx + d/2 + 32, maxW = x + w - lx - 26;
+  ctx.font = `600 16px ${display}`;
+  ctx.fillStyle = 'rgba(242,234,221,0.97)';
+  ctx.fillText(ellipsize(ctx, b.t, maxW), lx, cy-8);
+  ctx.font = `10.5px ${mono}`;
+  ctx.fillStyle = hover ? rgba(C.signal,.8) : 'rgba(242,234,221,0.46)';
+  ctx.fillText(ellipsize(ctx, b.s, maxW), lx, cy+13);
+
+}
+
+function drawHub(ctx, o, L, mono){
+  const hh = o.hubHover, hp = o.hubPress;
+  const hasTarget = o.hover !== null && o.hover !== undefined;
+  const r = L.centerR * (1 + 0.04*hh - 0.06*hp);
+
+  ctx.save();
+  const g = ctx.createRadialGradient(0,-r*0.6,r*0.15,0,0,r);
+  g.addColorStop(0, rgb(mixC([13,35,40],[40,21,14],hh)));
+  g.addColorStop(1, rgb(mixC([5,17,20],[20,11,8],hh)));
+  ctx.beginPath(); ctx.arc(0,0,r,0,2*Math.PI); ctx.fillStyle=g; ctx.fill();
+  ctx.strokeStyle = `rgba(242,234,221,${0.14+0.26*hh+0.2*hp})`;
+  ctx.lineWidth = 1; ctx.stroke();
+  ctx.restore();
+
+  const showNeedle = hasTarget ? 1 - Math.min(1, hh*2.2) : 0.40*(1-hh);
+  const rot = o.needleAngle !== undefined ? o.needleAngle : (hasTarget ? L.angle(o.hover) : 0);
+
+  if (showNeedle > 0.02){
+    // a thin bearing line from the rim, ending in a small arrowhead — not a fat compass blob
+    ctx.save();
+    ctx.rotate(rot);
+    const tipY = -r*0.86;
+    ctx.beginPath();
+    ctx.moveTo(0, tipY);
+    ctx.lineTo(0, -r*0.30);
+    ctx.strokeStyle = rgba(C.signal, 0.55*showNeedle);
+    ctx.lineWidth = 1.6; ctx.lineCap='round';
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, tipY-5);
+    ctx.lineTo(4.2, tipY+4);
+    ctx.lineTo(-4.2, tipY+4);
+    ctx.closePath();
+    ctx.fillStyle = rgba(C.signal, 0.95*showNeedle);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // readout: the slice number you are aiming at, engraved in the hub
+  if (hasTarget && hh < 0.6){
+    ctx.save();
+    ctx.globalAlpha = (1-hh/0.6);
+    const nr = r*0.42;
+    ctx.beginPath(); ctx.arc(0,0,nr,0,2*Math.PI);
+    ctx.fillStyle = 'rgba(5,16,19,0.92)'; ctx.fill();
+    ctx.strokeStyle = rgba(C.signal, 0.22); ctx.lineWidth = 1; ctx.stroke();
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font = `600 ${Math.round(r*0.44)}px ${mono}`;
+    ctx.fillStyle = rgba(C.signal, 0.98);
+    ctx.fillText(String(o.hover+1).padStart(2,'0'), 0, r*0.01);
+    ctx.restore();
+  }
+  if (!hasTarget && hh < 0.3){
+    ctx.save(); ctx.globalAlpha = (1-hh/0.3)*0.5;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font = `500 ${Math.max(8, Math.round(r*0.20))}px ${mono}`;
+    ctx.fillStyle = 'rgba(242,234,221,0.75)';
+    ctx.letterSpacing = '1px';
+    ctx.fillText('esc', 0, 1);
+    ctx.restore();
+  }
+
+  if (hh > 0.02){
+    const arm = r*0.26;
+    ctx.save(); ctx.rotate(hh*Math.PI/4);
+    ctx.strokeStyle = rgba(C.signal, 0.92*hh);
+    ctx.lineWidth = Math.max(1.7, r*0.07); ctx.lineCap='round';
+    ctx.beginPath();
+    ctx.moveTo(-arm,-arm); ctx.lineTo(arm,arm);
+    ctx.moveTo(arm,-arm); ctx.lineTo(-arm,arm);
+    ctx.stroke(); ctx.restore();
+  }
+}
+
+function wedgePath(ctx, start, sweep, inner, outer, L){
+  const p = new Path2D();
+  const segs = Math.max(2, Math.ceil(sweep/(Math.PI/24)));
+  let q = L.pt(outer, start); p.moveTo(q.x,q.y);
+  for (let i=1;i<=segs;i++){ q = L.pt(outer, start+sweep*i/segs); p.lineTo(q.x,q.y); }
+  for (let i=segs;i>=0;i--){ q = L.pt(inner, start+sweep*i/segs); p.lineTo(q.x,q.y); }
+  p.closePath(); return p;
+}
+function roundRect(ctx,x,y,w,h,r){
+  ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+}
+function ellipsize(ctx, text, maxW){
+  if (!text) return '';
+  if (ctx.measureText(text).width <= maxW) return text;
+  let s = text;
+  while (s.length > 1 && ctx.measureText(s+'…').width > maxW) s = s.slice(0,-1);
+  return s.replace(/[\s·,.;:-]+$/,'') + '…';
+}
+
+// ---------- boot ----------
+const radial = document.getElementById('radial');
+const desktop = document.getElementById('desktop');
+const manager = document.getElementById('manager');
+const onboarding = document.getElementById('onboarding');
+let mode = (location.hash||'#radial').slice(1);
+if (!['radial','manager','onboarding','solo','two','anim'].includes(mode)) mode='radial';
+
+function setMode(m){
+  desktop.classList.toggle('hidden', !(m==='radial'||m==='solo'||m==='two'||m==='anim'));
+  radial.classList.toggle('hidden', !(m==='radial'||m==='solo'||m==='two'||m==='anim'));
+  manager.classList.toggle('hidden', m!=='manager');
+  onboarding.classList.toggle('hidden', m!=='onboarding');
+}
+setMode(mode);
+
+const R = 200, HUB = 56;
+const springs = {
+  open: new Spring(1, 300, 24),
+  content: new Spring(1, 250, 26),
+  sweep: new Spring(1, 260, 34),
+  hubHover: new Spring(0, 380, 28),
+  hubPress: new Spring(0, 500, 30),
+  needle: new Spring(0, 300, 26),
+};
+const count = mode==='solo' ? 1 : (mode==='two' ? 2 : 9);
+const hoverTargets = Array.from({length: count}, ()=> new Spring(0,420,30));
+let hovered = mode==='anim' ? null : 1;
+let pointer = { x: innerWidth/2, y: innerHeight/2 };
+const angleOf = (i,n) => i*(2*Math.PI/n);
+
+function origin(){
+  const margin = R + 110;
+  const cx = Math.min(Math.max(pointer.x, margin), innerWidth-margin);
+  const cy = Math.min(Math.max(pointer.y, margin), innerHeight-margin);
+  return { cx, cy };
+}
+
+addEventListener('mousemove', e=>{
+  pointer = { x:e.clientX, y:e.clientY };
+  if (mode!=='radial' && mode!=='two') return;
+  const {cx,cy} = origin();
+  const L = makeLayout(count,R,HUB);
+  const p = { x:e.clientX-cx, y:e.clientY-cy };
+  const r = Math.hypot(p.x,p.y);
+  const inside = r<=L.centerR;
+  let nv = null;
+  if (!inside) for (let i=0;i<count;i++) if (L.sliceContains(p,i,0)) { nv = i; break; }
+  hovered = nv;
+  hoverTargets.forEach((s,i)=> s.target = (i===nv)?1:0);
+  springs.hubHover.target = inside ? 1 : 0;
+});
+
+let last = performance.now(), t0 = performance.now();
+function frame(now){
+  const dt = Math.min(0.05,(now-last)/1000); last = now;
+  for (const k in springs) springs[k].step(dt);
+  hoverTargets.forEach(s=>s.step(dt));
+
+  if (mode==='radial'||mode==='solo'||mode==='two'||mode==='anim'){
+    const {cx,cy} = origin();
+    if (mode==='anim'){
+      const el = ((now-t0)/1000) % 4.0;
+      const t = Math.min(1, el/0.55);
+      springs.open.snap(t); springs.content.snap(t);
+      springs.sweep.snap(el<0.75 ? el/0.75 : 1);
+      hovered = el>1.7 ? 3 : null;
+      hoverTargets.forEach((s,i)=> s.target = (i===hovered)?1:0);
+    }
+    if (hovered!==null) springs.needle.target = angleOf(hovered, count);
+    drawDial(radial,{
+      w:innerWidth, h:innerHeight, cx, cy, R, hubR:HUB,
+      bookmarks:BOOKMARKS, count, showNumbers:true,
+      open:springs.open.value, content:springs.content.value, sweep:springs.sweep.value,
+      hover:hovered, pressed:null,
+      hubHover:springs.hubHover.value, hubPress:springs.hubPress.value,
+      needleAngle: springs.needle.value,
+      page:0, pages: count>1?3:0, scrim:true, hint:true
+    });
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+(function drawMini(){
+  const svg = document.getElementById('mini');
+  if (!svg) return;
+  const L = makeLayout(9, 42, 11.5);
+  let html = '';
+  for (let i=0;i<9;i++){
+    const d = L.drawable(i, 0.045), segs = 5, pts = [];
+    for (let k=0;k<=segs;k++) pts.push(L.pt(L.outerR, d.start+d.sweep*k/segs));
+    for (let k=segs;k>=0;k--) pts.push(L.pt(L.innerR, d.start+d.sweep*k/segs));
+    const dd = pts.map((q,j)=>(j?'L':'M')+q.x.toFixed(2)+' '+q.y.toFixed(2)).join(' ')+' Z';
+    const on = i===0;
+    html += `<path d="${dd}" fill="${on?'rgba(255,107,44,.26)':'rgba(242,234,221,.055)'}" stroke="${on?'rgba(255,107,44,.75)':'rgba(242,234,221,.14)'}" stroke-width=".8"/>`;
+  }
+  html += `<circle r="${L.centerR}" fill="#08191d" stroke="rgba(242,234,221,.16)" stroke-width=".8"/>`;
+  html += `<path d="M0 -6.4 L1.8 0 L0 2.2 L-1.8 0 Z" fill="#FF6B2C"/>`;
+  html += `<circle r="1.1" fill="rgba(242,234,221,.5)"/>`;
+  svg.innerHTML = html;
+})();
+
+(function drawOnb(){
+  const c = document.getElementById('onbRadial');
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  const dpr = 2;
+  c.width = 196*dpr; c.height = 196*dpr;
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.translate(98,98);
+  const L = makeLayout(6, 78, 24);
+  for (let i=0;i<6;i++){
+    const d = L.drawable(i, 0.06);
+    ctx.beginPath(); ctx.strokeStyle='rgba(242,234,221,.10)'; ctx.lineWidth=1;
+    ctx.stroke(wedgePath(ctx,d.start,d.sweep,L.innerR,L.outerR,L));
+    const p = L.pt(L.bezelR+6, L.angle(i));
+    ctx.font='500 7px '+getComputedStyle(document.body).getPropertyValue('--mono');
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle='rgba(242,234,221,.28)'; ctx.fillText(String(i+1), p.x, p.y);
+  }
+  // one slice lit, plus the needle: the whole idea in one small mark
+  const d = L.drawable(1, 0.06);
+  ctx.beginPath();
+  ctx.fillStyle='rgba(255,107,44,.20)';
+  ctx.fill(wedgePath(ctx,d.start,d.sweep,L.innerR,L.outerR,L));
+  ctx.beginPath(); ctx.strokeStyle='rgba(255,107,44,.65)'; ctx.lineWidth=1;
+  ctx.stroke(wedgePath(ctx,d.start,d.sweep,L.innerR,L.outerR,L));
+  ctx.beginPath(); ctx.arc(0,0,L.centerR,0,2*Math.PI);
+  ctx.fillStyle='#08191d'; ctx.fill(); ctx.strokeStyle='rgba(242,234,221,.16)'; ctx.stroke();
+  ctx.save(); ctx.rotate(L.angle(1));
+  ctx.beginPath(); ctx.moveTo(0,-13); ctx.lineTo(3.2,0); ctx.lineTo(0,3.6); ctx.lineTo(-3.2,0); ctx.closePath();
+  ctx.fillStyle='#FF6B2C'; ctx.fill(); ctx.restore();
+})();
+</script>
+</body>
+</html>

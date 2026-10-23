@@ -1,40 +1,59 @@
 import SwiftUI
 import RadialCore
 
+/// Settings. The shortcut is the first thing here because it is the only thing most people
+/// will ever change: everything else already behaves sensibly out of the box.
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
     @State private var isRecording = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            header
+            Rectangle().fill(Palette.rim).frame(height: 1)
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 22) {
                     shortcutSection
-                    behaviourSection
-                    appearanceSection
+                    openingSection
+                    dialSection
+                    safariSection
                     aboutSection
                 }
-                .padding(20)
+                .padding(24)
             }
         }
-        .background(Palette.background)
-        .frame(width: 420, height: 560)
+        .background(Palette.void)
+        .frame(width: 460, height: 600)
+    }
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("Settings")
+                .font(Palette.display(17, .semibold))
+                .foregroundStyle(Palette.bone)
+            Spacer()
+            Text("Safari Radial")
+                .font(Palette.mono(10))
+                .foregroundStyle(Palette.boneFaint)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 18)
+        .padding(.bottom, 14)
     }
 
     // MARK: - Shortcut
 
     private var shortcutSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Shortcut")
-
+        section("Shortcut") {
             HStack(spacing: 10) {
+                // The recorder is the control itself: click it and press the new keys.
                 ZStack {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(Palette.surface)
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Palette.hull)
                         .overlay(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
                                 .strokeBorder(
-                                    isRecording ? Palette.accent : Palette.stroke,
+                                    isRecording ? Palette.signal : Palette.rim,
                                     lineWidth: isRecording ? 1.5 : 1
                                 )
                         )
@@ -43,83 +62,70 @@ struct SettingsView: View {
                         HotkeyRecorder(
                             isRecording: $isRecording,
                             current: model.preferences.hotkey,
-                            onCapture: { spec in
-                                model.setHotkey(spec)
-                            }
+                            onCapture: { spec in model.setHotkey(spec) }
                         )
                     } else {
                         Text(model.preferences.hotkey.displayName)
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                            .foregroundStyle(Palette.primaryText)
+                            .font(Palette.mono(13, .semibold))
+                            .foregroundStyle(Palette.bone)
                     }
                 }
-                .frame(height: 34)
-                .frame(maxWidth: 150)
+                .frame(width: 132, height: 32)
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.76)) {
                         isRecording = true
                     }
                 }
-                .help("Click, then press the shortcut you want")
+                .help("Click, then press the keys you want")
 
                 Button(isRecording ? "Cancel" : "Change") {
-                    withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.76)) {
                         isRecording.toggle()
                     }
                 }
-                .buttonStyle(SpringyButtonStyle())
+                .buttonStyle(QuietButtonStyle())
 
                 Spacer()
+
+                Button("Reset to ⌘E") {
+                    model.setHotkey(.default)
+                }
+                .buttonStyle(QuietButtonStyle(tint: Palette.boneDim))
+                .disabled(model.preferences.hotkey == .default)
             }
 
             if let error = model.hotkeyError {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Palette.danger)
+                notice(error, tone: .bad, icon: "exclamationmark.triangle.fill")
             } else if let conflict = model.conflict {
-                // Shadowing ⌘R is a deliberate trade-off the user should opt into knowingly.
-                VStack(alignment: .leading, spacing: 5) {
-                    Label(
-                        "\(model.preferences.hotkey.displayName) usually \(conflict.description) in \(conflict.owner).",
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Palette.accentWarm)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                    Button("Use \(model.suggestedHotkey.displayName) instead") {
+                // A system-wide hot key wins over the frontmost app, so a collision is a real
+                // trade-off, not a bug. Major collisions get a warning and a one-click fix.
+                notice(
+                    "\(model.preferences.hotkey.displayName) \(conflict.description) in \(conflict.owner).",
+                    tone: conflict.severity == .major ? .warn : .quiet,
+                    icon: conflict.severity == .major ? "exclamationmark.triangle.fill" : "info.circle"
+                )
+                HStack(spacing: 6) {
+                    Button("Use \(model.suggestedHotkey.displayName)") {
                         model.setHotkey(model.suggestedHotkey)
                     }
-                    .buttonStyle(SpringyButtonStyle(tint: Palette.accentWarm.opacity(0.18)))
-                    .font(.system(size: 10.5))
+                    .buttonStyle(QuietButtonStyle(tint: Palette.signal))
+                    Text("avoids the clash")
+                        .font(Palette.display(10.5, .regular))
+                        .foregroundStyle(Palette.boneFaint)
                 }
             } else {
-                Text("Opens the menu at your cursor. Press it again to close.")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Palette.tertiaryText)
-            }
-
-            HStack(spacing: 6) {
-                ForEach(HotkeySpec.suggestions.dropFirst().indices, id: \.self) { index in
-                    let spec = HotkeySpec.suggestions[index]
-                    Button(spec.displayName) {
-                        model.setHotkey(spec)
-                    }
-                    .buttonStyle(SpringyButtonStyle(tint: Color.white.opacity(0.06)))
-                    .font(.system(size: 11))
-                }
-                Spacer()
+                Text("Works anywhere. Press it again to close the dial.")
+                    .font(Palette.display(10.5, .regular))
+                    .foregroundStyle(Palette.boneFaint)
             }
         }
     }
 
-    // MARK: - Behaviour
+    // MARK: - Opening
 
-    private var behaviourSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Opening links")
-
+    private var openingSection: some View {
+        section("Opening links") {
             Picker("", selection: Binding(
                 get: { model.preferences.openIn },
                 set: { model.setOpenTarget($0) }
@@ -132,56 +138,27 @@ struct SettingsView: View {
             .labelsHidden()
 
             if model.preferences.openIn != .newTab {
-                Text("Uses AppleScript, so macOS will ask once for permission to control Safari. Falls back to a new tab if denied.")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Palette.tertiaryText)
+                Text("Uses AppleScript, so macOS asks once for permission to control Safari. Falls back to a new tab if denied.")
+                    .font(Palette.display(10.5, .regular))
+                    .foregroundStyle(Palette.boneFaint)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Toggle("Open in the background", isOn: Binding(
-                get: { model.preferences.openInBackground },
-                set: { model.setBackground($0) }
-            ))
-            .toggleStyle(.switch)
-            .font(.system(size: 12))
-            .foregroundStyle(Palette.primaryText)
-
-            Toggle("Refresh from Safari at launch", isOn: Binding(
-                get: { model.preferences.autoSyncOnLaunch },
-                set: { model.setAutoSync($0) }
-            ))
-            .toggleStyle(.switch)
-            .font(.system(size: 12))
-            .foregroundStyle(Palette.primaryText)
-
-            Toggle("Start at login", isOn: Binding(
-                get: { model.preferences.launchAtLogin },
-                set: { model.setLaunchAtLogin($0) }
-            ))
-            .toggleStyle(.switch)
-            .font(.system(size: 12))
-            .foregroundStyle(Palette.primaryText)
+            toggle("Open in the background", isOn: model.preferences.openInBackground, action: model.setBackground)
+            toggle("Start at login", isOn: model.preferences.launchAtLogin, action: model.setLaunchAtLogin)
         }
     }
 
-    // MARK: - Appearance
+    // MARK: - Dial
 
-    private var appearanceSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("Menu")
+    private var dialSection: some View {
+        section("The dial") {
+            toggle("Print slot numbers inside the dial", isOn: model.preferences.showNumbers, action: model.setShowNumbers)
 
-            Toggle("Show slice numbers", isOn: Binding(
-                get: { model.preferences.showNumbers },
-                set: { model.setShowNumbers($0) }
-            ))
-            .toggleStyle(.switch)
-            .font(.system(size: 12))
-            .foregroundStyle(Palette.primaryText)
-
-            HStack {
+            HStack(spacing: 10) {
                 Text("Size")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Palette.primaryText)
+                    .font(Palette.display(12, .regular))
+                    .foregroundStyle(Palette.bone)
                 Slider(
                     value: Binding(
                         get: { model.preferences.menuRadius },
@@ -190,31 +167,99 @@ struct SettingsView: View {
                     in: 140...320
                 )
                 Text("\(Int(model.preferences.menuRadius))")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(Palette.secondaryText)
-                    .frame(width: 30, alignment: .trailing)
+                    .font(Palette.mono(10.5))
+                    .foregroundStyle(Palette.boneDim)
+                    .frame(width: 28, alignment: .trailing)
+                    .monospacedDigit()
             }
         }
     }
 
-    private var aboutSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            sectionTitle("About")
-            Text("Nine slices per page. Use ← → to page, 1–9 to fire a slice, Esc or the centre ✕ to close.")
-                .font(.system(size: 10.5))
-                .foregroundStyle(Palette.tertiaryText)
+    // MARK: - Safari
+
+    private var safariSection: some View {
+        section("Safari import") {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(model.hasFullDiskAccess ? Palette.mint : Palette.boneFaint)
+                    .frame(width: 6, height: 6)
+                Text(model.hasFullDiskAccess ? "Full Disk Access granted" : "Full Disk Access not granted")
+                    .font(Palette.display(12, .medium))
+                    .foregroundStyle(Palette.bone)
+            }
+
+            Text("Optional. Only the Safari import needs it. Adding links by hand, reordering, the shortcut and every setting work without it.")
+                .font(Palette.display(10.5, .regular))
+                .foregroundStyle(Palette.boneFaint)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Bookmarks are stored in ~/Library/Application Support/SafariRadial.")
-                .font(.system(size: 10.5, design: .monospaced))
-                .foregroundStyle(Palette.tertiaryText)
+
+            HStack(spacing: 8) {
+                Button("Open Full Disk Access") { model.openFullDiskAccessSettings() }
+                    .buttonStyle(QuietButtonStyle())
+                Button("Import now") { model.syncFromSafari() }
+                    .buttonStyle(QuietButtonStyle())
+                    .disabled(!model.hasFullDiskAccess)
+            }
+
+            toggle("Refresh from Safari at launch", isOn: model.preferences.autoSyncOnLaunch, action: model.setAutoSync)
+                .disabled(!model.hasFullDiskAccess)
+        }
+    }
+
+    // MARK: - About
+
+    private var aboutSection: some View {
+        section("How the dial works") {
+            Text("Nine slots per page. Press 1–9 to open one, ← → to change page, Esc to close.")
+                .font(Palette.display(10.5, .regular))
+                .foregroundStyle(Palette.boneFaint)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Bookmarks live in ~/Library/Application Support/SafariRadial")
+                .font(Palette.mono(9.5))
+                .foregroundStyle(Palette.boneFaint)
                 .textSelection(.enabled)
         }
     }
 
-    private func sectionTitle(_ text: String) -> some View {
-        Text(text.uppercased())
-            .font(.system(size: 9.5, weight: .semibold))
-            .tracking(0.8)
-            .foregroundStyle(Palette.tertiaryText)
+    // MARK: - Pieces
+
+    private enum NoticeTone { case bad, warn, quiet }
+
+    private func notice(_ text: String, tone: NoticeTone, icon: String) -> some View {
+        let colour: Color
+        switch tone {
+        case .bad: colour = Palette.alarm
+        case .warn: colour = Palette.signal
+        case .quiet: colour = Palette.boneDim
+        }
+        return HStack(alignment: .top, spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+                .padding(.top, 1)
+            Text(text)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(Palette.display(10.5, .medium))
+        .foregroundStyle(colour)
+    }
+
+    private func toggle(_ label: String, isOn: Bool, action: @escaping (Bool) -> Void) -> some View {
+        Toggle(label, isOn: Binding(get: { isOn }, set: action))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .font(Palette.display(12, .regular))
+            .foregroundStyle(Palette.bone)
+    }
+
+    private func section<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text(title)
+                .font(Palette.display(11.5, .semibold))
+                .foregroundStyle(Palette.bone.opacity(0.85))
+            content()
+        }
     }
 }

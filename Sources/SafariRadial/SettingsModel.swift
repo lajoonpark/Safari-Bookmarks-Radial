@@ -6,6 +6,8 @@ import RadialCore
 final class SettingsModel: ObservableObject {
     @Published private(set) var preferences: Preferences
     @Published var hotkeyError: String?
+    @Published private(set) var safariMessage: String?
+    @Published private(set) var hasFullDiskAccess = false
 
     private let environment: AppEnvironment
     private let hotkey: GlobalHotkey
@@ -18,10 +20,40 @@ final class SettingsModel: ObservableObject {
         self.environment = environment
         self.hotkey = hotkey
         self.preferences = environment.preferences
+        self.hasFullDiskAccess = environment.hasFullDiskAccess
     }
 
     func refresh() {
         preferences = environment.preferences
+        hasFullDiskAccess = environment.hasFullDiskAccess
+    }
+
+    // MARK: - Safari import
+
+    /// Optional by design: the rest of the app never consults this.
+    func syncFromSafari() {
+        let report = environment.syncFromSafari()
+        hasFullDiskAccess = environment.hasFullDiskAccess
+        if let error = report.error {
+            safariMessage = error.localizedDescription
+        } else if let result = report.result {
+            let parts = [
+                result.added > 0 ? "\(result.added) added" : nil,
+                result.updated > 0 ? "\(result.updated) updated" : nil,
+                result.added == 0 && result.updated == 0 ? "already up to date" : nil,
+            ].compactMap { $0 }
+            safariMessage = parts.joined(separator: ", ")
+        }
+    }
+
+    func openFullDiskAccessSettings() {
+        let urls = [
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles",
+        ]
+        for string in urls {
+            if let url = URL(string: string), NSWorkspace.shared.open(url) { return }
+        }
     }
 
     var conflict: HotkeyConflicts.Conflict? {

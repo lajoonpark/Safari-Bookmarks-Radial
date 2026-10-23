@@ -25,6 +25,19 @@ final class AppEnvironment {
         var error: Error?
     }
 
+    /// Applies one-time preference migrations and persists the result.
+    ///
+    /// Called at launch before anything reads `preferences`, so the rest of the app only ever
+    /// sees current values.
+    func migratePreferencesIfNeeded() {
+        let before = preferences
+        var migrated = preferences
+        migrated.migrateLegacyHotkey()
+        guard migrated != before else { return }
+        preferences = migrated
+        preferences.save(to: preferencesURL)
+    }
+
     /// Pulls the current Safari bookmarks in.
     ///
     /// Links already in the list keep their slot, so slice numbers survive repeated imports.
