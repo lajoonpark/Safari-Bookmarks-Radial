@@ -103,6 +103,12 @@ public struct RadialLayout: Equatable {
         return points
     }
 
+    // `@inline(never)` works around a Swift 6.4 (Xcode 27) SIL optimizer crash: when this
+    // struct-returning helper is inlined into a caller that feeds its fields into an AppKit
+    // draw call (e.g. `RadialMenuView.drawSliceContent`), SILCombine aborts with an
+    // "Operand.swift:83" assertion / stack dump. Keeping it opaque to the optimizer avoids the
+    // inlining that triggers the bug. Remove once the compiler is fixed.
+    @inline(never)
     public func point(radius: CGFloat, angle: CGFloat) -> CGPoint {
         CGPoint(x: radius * sin(angle), y: -radius * cos(angle))
     }
