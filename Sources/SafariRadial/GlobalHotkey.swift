@@ -101,7 +101,7 @@ final class GlobalHotkey {
                     EventParamName(kEventParamDirectObject),
                     EventParamType(typeEventHotKeyID),
                     nil,
-                    UInt32(MemoryLayout<EventHotKeyID>.size),
+                    MemoryLayout<EventHotKeyID>.size,
                     nil,
                     &hotKeyID
                 )
