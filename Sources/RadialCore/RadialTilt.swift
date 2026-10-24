@@ -1,4 +1,13 @@
 import Foundation
+// Required, not incidental: this module is built with default cross-module optimization, so its
+// optimized SIL is serialized and linked into the AppKit target. Importing only Foundation gives
+// `CGPoint` the ClangImporter's Double-field view, while AppKit sees the CoreGraphics overlay's
+// CGFloat fields; the SIL linker then deserializes point arithmetic whose field types do not
+// match the consumer's and the compiler crashes (swiftlang/swift#92222). Loading the overlay
+// here makes both modules agree. Guarded because CoreGraphics does not exist outside Darwin.
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 
 /// A slight 3D tilt of the dial's plane, as a planar perspective projection.
 ///

@@ -5,7 +5,14 @@
 #   ./scripts/build.sh              # build into ./build/SafariRadial.app
 #   ./scripts/build.sh --install    # build and copy into /Applications
 #   ./scripts/build.sh --run        # build and launch
+#   ./scripts/build.sh --verify     # build with SIL verification (see below)
 #
+# --verify runs the SIL verifier on the optimized module. Release builds use cross-module
+# optimization, which serializes RadialCore's optimized SIL and links it into this target; a
+# type disagreement between the two (e.g. the two views of CGPoint, swiftlang/swift#92222) can
+# otherwise crash the compiler in a random later pass, so a green build is not proof of a sane
+# one. The verifier turns that into a deterministic error instead. Slower, so opt-in.
+
 # Ad-hoc signed by default. Ad-hoc signatures are fine locally but the Full Disk Access
 # grant is tied to the signature, so rebuilding invalidates it — re-grant after a rebuild,
 # or sign with a Developer ID if you plan to iterate a lot.
@@ -24,13 +31,15 @@ MIN_MACOS="13.0"
 CONFIG="release"
 INSTALL=0
 RUN=0
+VERIFY=0
 for arg in "$@"; do
   case "$arg" in
     --install) INSTALL=1 ;;
     --run) RUN=1 ;;
     --debug) CONFIG="debug" ;;
+    --verify) VERIFY=1 ;;
     -h|--help)
-      sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -56,9 +65,18 @@ MACOS_DIR="$APP_DIR/Contents/MacOS"
 RESOURCES_DIR="$APP_DIR/Contents/Resources"
 
 echo "==> Compiling ($CONFIG)"
-swift build -c "$CONFIG" --product "$APP_NAME"
+SCRATCH=".build"
+if [[ $VERIFY -eq 1 ]]; then
+  # A separate scratch path, so the verifier actually recompiles instead of reusing objects
+  # from an earlier (possibly crashing) build.
+  SCRATCH=".build/verify"
+  swift build -c "$CONFIG" --product "$APP_NAME" --scratch-path "$SCRATCH" \
+    -Xswiftc -Xfrontend -Xswiftc -sil-verify-all
+else
+  swift build -c "$CONFIG" --product "$APP_NAME"
+fi
 
-BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)/$APP_NAME"
+BIN_PATH="$(swift build -c "$CONFIG" --scratch-path "$SCRATCH" --show-bin-path)/$APP_NAME"
 if [[ ! -f "$BIN_PATH" ]]; then
   echo "error: expected binary at $BIN_PATH" >&2
   exit 1

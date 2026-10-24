@@ -1,4 +1,9 @@
 import XCTest
+// Same override as the core target: an optimized (`swift test -c release`) test module that
+// constructs CGPoint without the overlay re-triggers swiftlang/swift#92222.
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 @testable import RadialCore
 
 final class RadialLayoutTests: XCTestCase {

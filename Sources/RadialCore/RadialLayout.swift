@@ -1,4 +1,10 @@
 import Foundation
+// See RadialTilt.swift: without the CoreGraphics overlay, `CGPoint` resolves to the Double-field
+// ClangImporter view instead of the CGFloat one the AppKit target links against, and serialized
+// cross-module SIL built on it crashes the SIL linker (swiftlang/swift#92222).
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 
 /// Pure geometry for the radial menu. No AppKit, so it can be unit tested on any platform.
 ///
@@ -116,11 +122,11 @@ public struct RadialLayout: Equatable, Sendable {
         return points
     }
 
-    // `@inline(never)` works around a Swift 6.4 (Xcode 27) SIL optimizer crash: when this
-    // struct-returning helper is inlined into a caller that feeds its fields into an AppKit
-    // draw call (e.g. `RadialMenuView.drawSliceContent`), SILCombine aborts with an
-    // "Operand.swift:83" assertion / stack dump. Keeping it opaque to the optimizer avoids the
-    // inlining that triggers the bug. Remove once the compiler is fixed.
+    // `@inline(never)` was added when this helper's inlining into an AppKit draw call crashed
+    // SILCombine ("Operand.swift:83"). That was an earlier symptom of the mismatched-`CGPoint`
+    // serialized SIL described at the top of this file, not a separate bug. The CoreGraphics
+    // import addresses the root cause, so this is likely redundant now; kept until a macOS
+    // toolchain confirms it, since the Linux build cannot exercise the SIL linker.
     @inline(never)
     public func point(radius: CGFloat, angle: CGFloat) -> CGPoint {
         CGPoint(x: radius * sin(angle), y: -radius * cos(angle))
