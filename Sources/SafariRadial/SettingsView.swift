@@ -126,6 +126,32 @@ struct SettingsView: View {
 
     private var openingSection: some View {
         section("Opening links") {
+            // The browser first, because it decides which tab targets are even possible.
+            HStack(spacing: 10) {
+                Text("Open in")
+                    .font(Palette.display(12, .regular))
+                    .foregroundStyle(Palette.bone)
+                    .frame(width: 62, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { model.preferences.browserBundleID },
+                    set: { bundleID in
+                        model.setBrowser(Browser.browser(forBundleID: bundleID))
+                    }
+                )) {
+                    ForEach(model.installedBrowsers) { browser in
+                        Text(browser.name).tag(browser.bundleID)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Text(openSummary)
+                .font(Palette.display(10.5, .regular))
+                .foregroundStyle(Palette.boneFaint)
+                .fixedSize(horizontal: false, vertical: true)
+
             Picker("", selection: Binding(
                 get: { model.preferences.openIn },
                 set: { model.setOpenTarget($0) }
@@ -137,8 +163,8 @@ struct SettingsView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
 
-            if model.preferences.openIn != .newTab {
-                Text("Uses AppleScript, so macOS asks once for permission to control Safari. Falls back to a new tab if denied.")
+            if model.preferences.openIn != .newTab && model.targetIsHonoured {
+                Text("Uses AppleScript, so macOS asks once for permission to control \(model.preferences.browser.name). Falls back to a new tab if denied.")
                     .font(Palette.display(10.5, .regular))
                     .foregroundStyle(Palette.boneFaint)
                     .fixedSize(horizontal: false, vertical: true)
@@ -147,6 +173,17 @@ struct SettingsView: View {
             toggle("Open in the background", isOn: model.preferences.openInBackground, action: model.setBackground)
             toggle("Start at login", isOn: model.preferences.launchAtLogin, action: model.setLaunchAtLogin)
         }
+    }
+
+    /// One sentence describing exactly what will happen, naming the browser.
+    ///
+    /// Built from the same `OpenPlan` the launcher uses, so the promise and the behaviour
+    /// cannot drift. It is also where an unscriptable browser is admitted: the description
+    /// says "opens in a new tab in Firefox" rather than promising a target that browser
+    /// cannot be asked for.
+    private var openSummary: String {
+        OpenPlan.description(for: model.preferences.openIn, in: model.preferences.browser)
+            + (model.preferences.openInBackground ? ", in the background." : ".")
     }
 
     // MARK: - Dial

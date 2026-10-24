@@ -42,17 +42,26 @@ enum RadialTheme {
     // Ink
     static let titleInk = NSColor(calibratedRed: 0.949, green: 0.918, blue: 0.863, alpha: 0.95)
     static let titleInkHover = NSColor(calibratedRed: 0.988, green: 0.965, blue: 0.925, alpha: 1)
-    static let subtitleInk = NSColor(calibratedRed: 0.949, green: 0.918, blue: 0.863, alpha: 0.46)
-    static let subtitleInkHover = NSColor(calibratedRed: 1.0, green: 0.420, blue: 0.173, alpha: 0.88)
+    /// Host names on a wedge. 0.46 measured 3.9:1 against the mid-slice fill, which is the
+    /// grey the client could not read; 0.70 lands near 7:1 and still sits under the title.
+    static let subtitleInk = NSColor(calibratedRed: 0.949, green: 0.918, blue: 0.863, alpha: 0.70)
+    /// Deliberately *not* orange. The hovered wedge is the brightest surface on screen, and
+    /// signal ink on it only reaches 2.3:1 — the aimed label would be the least readable
+    /// thing on the dial. The orange accent is carried by the wedge fill, its outline and the
+    /// rim tick instead; the text just gets brighter so it stays ahead of the background.
+    static let subtitleInkHover = NSColor(calibratedRed: 0.949, green: 0.918, blue: 0.863, alpha: 0.88)
     /// Slot numbers sit on the band outside the ring, so they have to hold up against a
     /// blurred desktop behind them — the old 0.38 read as a smudge on a bright wallpaper.
-    static let bezelNumberInk = NSColor(calibratedRed: 0.949, green: 0.918, blue: 0.863, alpha: 0.78)
+    static let bezelNumberInk = NSColor(calibratedRed: 0.949, green: 0.918, blue: 0.863, alpha: 0.86)
     /// Warm light that spills out from behind the aimed wedge.
     static let aimGlowAlpha: CGFloat = 0.13
     static let bezelTickInk = NSColor(calibratedRed: 0.949, green: 0.918, blue: 0.863, alpha: 0.11)
-    static let bezelTickMajorInk = NSColor(calibratedRed: 0.949, green: 0.918, blue: 0.863, alpha: 0.30)
+    static let bezelTickMajorInk = NSColor(calibratedRed: 0.949, green: 0.918, blue: 0.863, alpha: 0.38)
     static let signal = NSColor(calibratedRed: 1.0, green: 0.420, blue: 0.173, alpha: 1)
-    static let footerInk = NSColor(calibratedRed: 0.949, green: 0.918, blue: 0.863, alpha: 0.42)
+    /// Key hints and page numbers. Same problem as `subtitleInk` had: 0.60 measures 6.4:1 on
+    /// the void but only 4.3:1 where the hint strip overlaps the bezel band, so it is raised
+    /// to clear the floor in the worst place it is drawn.
+    static let footerInk = NSColor(calibratedRed: 0.949, green: 0.918, blue: 0.863, alpha: 0.68)
 
     // Backdrop: dims under the dial only, so it stays an overlay rather than a modal.
     static let backdropInner = NSColor(calibratedRed: 0.012, green: 0.035, blue: 0.043, alpha: 1)

@@ -137,6 +137,14 @@ final class BookmarkListModel: ObservableObject {
 
     func openBookmark(_ bookmark: Bookmark) {
         guard let url = Bookmark.normalizedURL(bookmark.url) else { return }
-        SafariLauncher.open(url, target: .newTab, background: false)
+        BrowserLauncher.open(
+            url,
+            target: .newTab,
+            browser: environment.preferences.browser,
+            background: false
+        )
     }
+
+    /// Name of the browser links open in, so row actions and help text can name it.
+    var browserName: String { environment.preferences.browser.name }
 }

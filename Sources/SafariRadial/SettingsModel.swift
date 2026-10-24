@@ -87,6 +87,23 @@ final class SettingsModel: ObservableObject {
         mutate { $0.openIn = target }
     }
 
+    /// Browsers actually installed on this Mac, plus the current choice.
+    var installedBrowsers: [Browser] {
+        BrowserLauncher.installedBrowsers(selected: preferences.browser)
+    }
+
+    func setBrowser(_ browser: Browser) {
+        mutate { $0.browserBundleID = browser.bundleID }
+    }
+
+    /// Whether the chosen target can be honoured exactly by the chosen browser.
+    ///
+    /// Firefox and friends have no tab scripting, so "Current tab" cannot be asked for:
+    /// saying so here is better than letting the setting quietly do nothing.
+    var targetIsHonoured: Bool {
+        OpenPlan.honoursTarget(preferences.openIn, in: preferences.browser)
+    }
+
     func setBackground(_ value: Bool) {
         mutate { $0.openInBackground = value }
     }

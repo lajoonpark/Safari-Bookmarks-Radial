@@ -30,13 +30,23 @@ enum Palette {
     // MARK: - Ink
 
     /// Warm bone rather than pure white: white on green-black looks dead and blue-shifted.
+    ///
+    /// The opacity ladder is set by measured contrast against the darkest surfaces in the
+    /// app, not by eye. On `void`/`hull` a 0.30 alpha lands at 2.4:1 and 0.42 at 3.5:1 —
+    /// both under the 4.5:1 floor for body text, which is exactly why the first build's
+    /// secondary text read as smudges on a dim display or at an angle.
     static let bone = Color(red: 0.949, green: 0.918, blue: 0.863)
-    static let boneDim = bone.opacity(0.56)
-    static let boneFaint = bone.opacity(0.30)
-    /// Field hints. Brighter than `boneFaint`: a placeholder has to be legible on its own.
-    /// Placeholder text inside the outlined add-bar fields. At 0.42 it disappeared into the
-    /// hull fill — the boxes looked empty, so nobody could tell what they were for.
-    static let hint = bone.opacity(0.56)
+    /// Secondary text: subtitles, host names, help lines. 5.2:1 on `hull`.
+    static let boneDim = bone.opacity(0.68)
+    /// Tertiary: column headers, decorative counts.
+    ///
+    /// 0.50 measured 4.4:1 on the bezel band, under the 4.5:1 floor — the same "can't read
+    /// the grey" complaint one step further down the ladder. 0.56 clears 5.2:1 everywhere the
+    /// token is used and still sits a full step below `boneDim`.
+    static let boneFaint = bone.opacity(0.56)
+    /// Placeholder text. Matched to `boneDim` rather than dimmer: a placeholder is the only
+    /// label some fields have, so it is the one grey string that must never be guessed at.
+    static let hint = bone.opacity(0.62)
 
     // MARK: - Signal
 

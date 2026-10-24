@@ -95,12 +95,15 @@ final class RadialController {
 
         presentation += 1
         previouslyActiveApp = NSWorkspace.shared.frontmostApplication
-        // A nonactivating panel only receives key events once the app is active. Activating an
-        // accessory app is invisible (no Dock icon, no menu bar), and focus is handed back on
-        // dismiss, so Safari keeps its place.
+        // A nonactivating panel only receives key events once the app is active. Activating is
+        // invisible here (no Dock icon, no menu bar in accessory mode), and focus is handed
+        // back on dismiss, so the other app keeps its place. The policy is deliberately not
+        // touched: AppDelegate manages it, and forcing `.accessory` here would strip the
+        // manager window's menu bar while it is open.
         NSApp.activate(ignoringOtherApps: true)
         panel.alphaValue = 1
         panel.makeKeyAndOrderFront(nil)
+        panel.makeFirstResponder(menuView)
         menuView.present()
     }
 
@@ -119,15 +122,33 @@ final class RadialController {
     }
 
     private func tearDown() {
-        panel.orderOut(nil)
-        // Hand focus back to whatever the user was doing — unless one of this app's own
-        // windows is open, in which case handing focus to another app would be wrong.
-        let hasOwnWindow = NSApp.windows.contains { $0.isVisible && $0 !== panel }
-        if !hasOwnWindow, let app = previouslyActiveApp,
-           app.bundleIdentifier != Bundle.main.bundleIdentifier {
-            app.activate(options: [])
-        }
+        // Hand focus back *before* the overlay leaves the screen.
+        //
+        // This ordering is the Stage Manager fix. Ordering the panel out first left this app
+        // active with no visible windows for one run-loop pass, and under Stage Manager that
+        // is a stage with nothing in it — so the system picked another stage and the user was
+        // thrown out of the desktop they were working in ("⌘E while the menu is open switches
+        // me into the working area"). Activating the other app while our overlay is still up
+        // gives the window server a real window to land on, so no stage change is needed.
+        let previous = previouslyActiveApp
         previouslyActiveApp = nil
+
+        // One of this app's own windows may be open behind the overlay (the manager window).
+        // In that case it is the right thing to land on, and stepping down would be wrong.
+        let ownWindow = NSApp.windows.first { $0.isVisible && $0 !== panel }
+        let canReturn = previous.map { $0.bundleIdentifier != Bundle.main.bundleIdentifier } ?? false
+
+        if ownWindow == nil, canReturn, let previous {
+            previous.activate(options: [])
+        }
+        panel.orderOut(nil)
+
+        if ownWindow == nil, !canReturn {
+            // Nothing to return to: step down rather than stay the active app with an empty
+            // stage. Doing it after `orderOut` is deliberate — deactivating with no windows
+            // and no fallback is the only case where the ordering above cannot help.
+            NSApp.deactivate()
+        }
     }
 
     /// Pointer activation goes through the session too, so both paths agree on state.
@@ -140,7 +161,12 @@ final class RadialController {
     private func open(_ bookmark: Bookmark, after delay: TimeInterval = 0) {
         guard let url = Bookmark.normalizedURL(bookmark.url) else { return }
         // Launch before dismissing: the click should feel like it took effect instantly.
-        SafariLauncher.open(url, target: preferences.openIn, background: preferences.openInBackground)
+        BrowserLauncher.open(
+            url,
+            target: preferences.openIn,
+            browser: preferences.browser,
+            background: preferences.openInBackground
+        )
         if delay > 0 {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 self?.finishAfterClose()

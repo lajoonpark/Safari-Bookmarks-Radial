@@ -38,6 +38,12 @@ final class RadialMenuView: NSView {
     private var hubPress = SpringValue(0, stiffness: 500, damping: 30)
     private var pageSwap = SpringValue(0, stiffness: 420, damping: 30)
     private var needle = SpringValue(0, stiffness: 300, damping: 26)
+    /// Pitch and roll of the dial's plane, in radians, driven by where the pointer is.
+    /// Springs rather than direct assignment so the disc leans with weight instead of
+    /// tracking the cursor rigidly.
+    private var tiltPitch = SpringValue(0, stiffness: 170, damping: 26)
+    private var tiltRoll = SpringValue(0, stiffness: 170, damping: 26)
+
 
     private var hoveredSlice: Int?
     private var pressedSlice: Int?
@@ -59,6 +65,34 @@ final class RadialMenuView: NSView {
 
     /// One bookmark is not a ring, so the hub is not drawn and the radius is not used.
     private var isSolo: Bool { bookmarks.count == 1 }
+
+    /// The live tilt, from the two springs.
+    private var tilt: RadialTilt {
+        RadialTilt(
+            pitch: CGFloat(tiltPitch.value),
+            roll: CGFloat(tiltRoll.value),
+            eyeDistance: menuRadius * RadialTilt.eyeDistanceRatio
+        )
+    }
+
+    /// Sets the tilt the pointer asks for, and lets the springs do the rest.
+    private func aimTilt(at point: CGPoint, animated: Bool) {
+        // Ease in relative to the *ring* radius (wedges start where the hub ends), but use the
+        // same eye distance the renderer uses, so the angle solved here produces exactly the
+        // perspective the projection applies.
+        let target = RadialTilt(
+            leaningToward: point,
+            radius: menuRadius * 1.1,
+            eyeDistance: menuRadius * RadialTilt.eyeDistanceRatio
+        )
+        if animated {
+            tiltPitch.target = Double(target.pitch)
+            tiltRoll.target = Double(target.roll)
+        } else {
+            tiltPitch.snap(to: Double(target.pitch))
+            tiltRoll.snap(to: Double(target.roll))
+        }
+    }
 
     private var hubDiameter: CGFloat { max(84, menuRadius * 0.46) }
     private var scaleFactor: CGFloat { max(0.78, min(1.0, menuRadius / 200)) }
@@ -109,6 +143,7 @@ final class RadialMenuView: NSView {
     private func primeHoverFromPointer() {
         let point = convert(window?.mouseLocationOutsideOfEventStream ?? .zero, from: nil)
         let relative = relativePoint(point)
+        aimTilt(at: relative, animated: false)
         let hit = isSolo ? soloHit(relative) : ringLayout.hitTest(relative)
         switch hit {
         case .slice(let index) where index < bookmarks.count:
@@ -196,8 +231,11 @@ final class RadialMenuView: NSView {
         hubPress.step(dt)
         pageSwap.step(dt)
         needle.step(dt)
+        tiltPitch.step(dt)
+        tiltRoll.step(dt)
         if openProgress.isAnimating || contentProgress.isAnimating || sweepProgress.isAnimating
-            || hubHover.isAnimating || hubPress.isAnimating || pageSwap.isAnimating || needle.isAnimating {
+            || hubHover.isAnimating || hubPress.isAnimating || pageSwap.isAnimating || needle.isAnimating
+            || tiltPitch.isAnimating || tiltRoll.isAnimating {
             moving = true
         }
 
@@ -235,11 +273,20 @@ final class RadialMenuView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         hoveredSlice = nil
+        // Off the menu, the disc settles back to level: holding the last lean would leave it
+        // tilted toward empty space while the pointer is somewhere else entirely.
+        tiltPitch.target = 0
+        tiltRoll.target = 0
         applyHoverTargets()
     }
 
     private func handlePointer(_ point: CGPoint) {
-        let relative = relativePoint(point)
+        let onScreen = relativePoint(point)
+        // The pointer arrives in screen space, but the dial is drawn tilted. Unproject it
+        // before hit testing, or the slice you click is not the slice under the cursor —
+        // which gets worse the further from the centre you aim.
+        let relative = tilt.unproject(onScreen)
+        aimTilt(at: relative, animated: true)
         let hit = isSolo ? soloHit(relative) : ringLayout.hitTest(relative)
 
         let newHover: Int?
@@ -277,7 +324,7 @@ final class RadialMenuView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        let relative = relativePoint(convert(event.locationInWindow, from: nil))
+        let relative = tilt.unproject(relativePoint(convert(event.locationInWindow, from: nil)))
         let hit = isSolo ? soloHit(relative) : ringLayout.hitTest(relative)
 
         pressStartedOutside = false
@@ -296,7 +343,7 @@ final class RadialMenuView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        let relative = relativePoint(convert(event.locationInWindow, from: nil))
+        let relative = tilt.unproject(relativePoint(convert(event.locationInWindow, from: nil)))
         let hit = isSolo ? soloHit(relative) : ringLayout.hitTest(relative)
 
         let closedOnHub = pressedHub
@@ -479,7 +526,7 @@ final class RadialMenuView: NSView {
                 colors: colors,
                 locations: [0.42, 1] as [CGFloat]
             ) {
-                let anchor = layout.point(radius: (inner + outer) / 2, angle: angle)
+                let anchor = tilt.project(layout.point(radius: (inner + outer) / 2, angle: angle))
                 context.saveGState()
                 context.drawRadialGradient(
                     glow,
@@ -502,7 +549,7 @@ final class RadialMenuView: NSView {
             )
             context.saveGState()
             context.translateBy(x: 1.5, y: 2.5)
-            context.addPath(castPath)
+            context.addPath(projected(castPath))
             context.setFillColor(NSColor.black.withAlphaComponent(0.45 * h).cgColor)
             context.fillPath()
             context.restoreGState()
@@ -510,7 +557,7 @@ final class RadialMenuView: NSView {
 
         // Body: deepest at the hub, lit at the rim, so the ring reads as one lit dial.
         context.saveGState()
-        context.addPath(path)
+        context.addPath(projected(path))
         context.clip()
         let near = blend(RadialTheme.sliceNear, RadialTheme.sliceNearHover, t: Double(h))
         let mid = blend(RadialTheme.sliceMid, RadialTheme.sliceMidHover, t: Double(h))
@@ -520,8 +567,8 @@ final class RadialMenuView: NSView {
             colors: [near.cgColor, mid.cgColor, far.cgColor] as CFArray,
             locations: [0, 0.72, 1] as [CGFloat]
         ) {
-            let a = layout.point(radius: inner, angle: angle)
-            let b = layout.point(radius: outer, angle: angle)
+            let a = tilt.project(layout.point(radius: inner, angle: angle))
+            let b = tilt.project(layout.point(radius: outer, angle: angle))
             context.drawLinearGradient(
                 gradient,
                 start: CGPoint(x: a.x, y: a.y),
@@ -532,7 +579,7 @@ final class RadialMenuView: NSView {
         context.restoreGState()
 
         context.saveGState()
-        context.addPath(path)
+        context.addPath(projected(path))
         context.setStrokeColor(
             (h > 0.02
                 ? RadialTheme.sliceStrokeHover.withAlphaComponent(0.30 + 0.45 * h)
@@ -548,18 +595,16 @@ final class RadialMenuView: NSView {
         // instead of a full rail, because a rail along a 40° wedge reads as an outline.
         if h > 0.02 && bookmarks.count > 3 {
             let half = min(0.16, layout.step * 0.22)
+            let tick = CGMutablePath()
+            let steps = 12
+            for step in 0...steps {
+                let t = CGFloat(step) / CGFloat(steps)
+                let point = layout.point(radius: outer + 5, angle: angle - half + half * 2 * t)
+                if step == 0 { tick.move(to: point) } else { tick.addLine(to: point) }
+            }
             context.saveGState()
-            context.addArc(
-                center: .zero,
-                radius: outer + 5,
-                startAngle: angle - half,
-                endAngle: angle + half,
-                clockwise: false
-            )
             context.setStrokeColor(RadialTheme.signal.withAlphaComponent(0.9 * h).cgColor)
-            context.setLineWidth(2)
-            context.setLineCap(.round)
-            context.strokePath()
+            stroke(tick, in: context, width: 2, cap: .round)
             context.restoreGState()
         }
 
@@ -594,8 +639,12 @@ extension RadialMenuView {
     ) {
         let angle = layout.centerAngle(of: index)
         let radius = layout.labelRadius + RadialTheme.labelLift * hover
-        let anchor = layout.point(radius: radius, angle: angle)
+        // Text sits on the leaning surface, so its anchor is projected with everything else
+        // and its size follows the same depth scale at that point — a label that stayed
+        // axis-aligned on a tilted ring reads as a sticker floating above it.
+        let anchor = tilt.project(layout.point(radius: radius, angle: angle))
         let slide = CGFloat((1 - Easing.outCubic(min(1, max(0, pageAlpha)))) * 9)
+        let labelScale = inkScale(at: layout.point(radius: radius, angle: angle))
 
         // Ask the layout how wide a box fits inside this wedge at this height. That is why a
         // label at 3 o'clock no longer pushes through the slice wall: the wedge's horizontal
@@ -616,11 +665,17 @@ extension RadialMenuView {
         // slice wall, whatever the font does.
         context.saveGState()
         let drawn = layout.drawableRange(of: index, inset: 0.05)
-        context.addPath(wedgePath(
+        context.addPath(projected(wedgePath(
             start: drawn.start, sweep: drawn.sweep,
             inner: layout.innerRadius, outer: layout.outerRadius, layout: layout
-        ))
+        )))
         context.clip()
+        if labelScale != 1 {
+            // Scale about the label's own anchor so the type shrinks in place.
+            context.translateBy(x: anchor.x + offset.x, y: anchor.y + offset.y)
+            context.scaleBy(x: 1, y: labelScale)
+            context.translateBy(x: -(anchor.x + offset.x), y: -(anchor.y + offset.y))
+        }
 
         title.string.draw(
             with: CGRect(x: centreX - maxWidth / 2, y: cursorY, width: maxWidth, height: title.height),
@@ -700,17 +755,21 @@ extension RadialMenuView {
         let bandOuter = bandInner + RadialTheme.bezelBandWidth
 
         context.saveGState()
-        context.addArc(center: .zero, radius: bandInner, startAngle: 0, endAngle: 2 * .pi, clockwise: false)
-        context.addArc(center: .zero, radius: bandOuter, startAngle: 0, endAngle: 2 * .pi, clockwise: true)
+        // Even-odd on two projected circles: the band is an annulus, and drawing the outer
+        // disc alone would cover the ring it is supposed to sit behind.
+        let band = CGMutablePath()
+        band.addPath(ringCircle(radius: bandInner))
+        band.addPath(ringCircle(radius: bandOuter))
+        context.addPath(projected(band))
         context.setFillColor(RadialTheme.bezelBandFill.withAlphaComponent(RadialTheme.bezelBandFill.alphaComponent * CGFloat(contentAlpha)).cgColor)
-        context.fillPath()
+        context.fillPath(using: .evenOdd)
         context.setStrokeColor(
             RadialTheme.bezelTickInk.withAlphaComponent(min(1, CGFloat(contentAlpha) * 1.4)).cgColor
         )
         context.setLineWidth(1)
-        context.addArc(center: .zero, radius: bandInner, startAngle: 0, endAngle: 2 * .pi, clockwise: false)
+        context.addPath(projected(ringCircle(radius: bandInner)))
         context.strokePath()
-        context.addArc(center: .zero, radius: bandOuter, startAngle: 0, endAngle: 2 * .pi, clockwise: false)
+        context.addPath(projected(ringCircle(radius: bandOuter)))
         context.strokePath()
         context.restoreGState()
 
@@ -731,25 +790,25 @@ extension RadialMenuView {
         for tick in 0..<tickCount {
             let angle = CGFloat(tick) / CGFloat(tickCount) * 2 * .pi
             guard !isBoundary(angle) else { continue }
-            let a = layout.point(radius: innerR, angle: angle)
-            let b = layout.point(radius: innerR + RadialTheme.bezelMinorTick, angle: angle)
+            let a = tilt.project(layout.point(radius: innerR, angle: angle))
+            let b = tilt.project(layout.point(radius: innerR + RadialTheme.bezelMinorTick, angle: angle))
             context.saveGState()
             context.setStrokeColor(RadialTheme.bezelTickInk.withAlphaComponent(CGFloat(contentAlpha)).cgColor)
             context.setLineWidth(1)
-            context.move(to: CGPoint(x: a.x, y: a.y))
-            context.addLine(to: CGPoint(x: b.x, y: b.y))
+            context.move(to: a)
+            context.addLine(to: b)
             context.strokePath()
             context.restoreGState()
         }
 
         for boundary in boundaries {
-            let a = layout.point(radius: innerR, angle: boundary)
-            let b = layout.point(radius: innerR + RadialTheme.bezelMajorTick, angle: boundary)
+            let a = tilt.project(layout.point(radius: innerR, angle: boundary))
+            let b = tilt.project(layout.point(radius: innerR + RadialTheme.bezelMajorTick, angle: boundary))
             context.saveGState()
             context.setStrokeColor(RadialTheme.bezelTickMajorInk.withAlphaComponent(CGFloat(contentAlpha)).cgColor)
             context.setLineWidth(1)
-            context.move(to: CGPoint(x: a.x, y: a.y))
-            context.addLine(to: CGPoint(x: b.x, y: b.y))
+            context.move(to: a)
+            context.addLine(to: b)
             context.strokePath()
             context.restoreGState()
         }
@@ -767,9 +826,18 @@ extension RadialMenuView {
                         .withAlphaComponent(CGFloat(contentAlpha)),
                 ]
             )
-            let anchor = layout.point(radius: numberRadius, angle: layout.centerAngle(of: index))
+            let unprojected = layout.point(radius: numberRadius, angle: layout.centerAngle(of: index))
+            let anchor = tilt.project(unprojected)
+            let numberScale = inkScale(at: unprojected)
             let size = string.size()
+            context.saveGState()
+            if numberScale != 1 {
+                context.translateBy(x: anchor.x, y: anchor.y)
+                context.scaleBy(x: 1, y: numberScale)
+                context.translateBy(x: -anchor.x, y: -anchor.y)
+            }
             string.draw(at: CGPoint(x: anchor.x - size.width / 2, y: anchor.y - size.height / 2))
+            context.restoreGState()
         }
     }
 
@@ -778,7 +846,6 @@ extension RadialMenuView {
         let hover = CGFloat(min(1, max(0, hubHover.value)))
         let press = CGFloat(min(1, max(0, hubPress.value)))
         let effective = radius * (1 + 0.04 * hover - 0.06 * press)
-        let rect = CGRect(x: -effective, y: -effective, width: effective * 2, height: effective * 2)
 
         context.saveGState()
         let top = blend(RadialTheme.hubFillTop, RadialTheme.hubFillTopHover, t: Double(hover))
@@ -788,7 +855,7 @@ extension RadialMenuView {
             colors: [top.cgColor, bottom.cgColor] as CFArray,
             locations: [0, 1] as [CGFloat]
         ) {
-            context.addEllipse(in: rect)
+            context.addPath(projected(ringCircle(radius: effective)))
             context.clip()
             context.drawLinearGradient(
                 gradient,
@@ -803,7 +870,8 @@ extension RadialMenuView {
         context.saveGState()
         context.setStrokeColor(RadialTheme.hubBorder.withAlphaComponent(0.55 + 0.30 * hover).cgColor)
         context.setLineWidth(1)
-        context.strokeEllipse(in: rect)
+        context.addPath(projected(ringCircle(radius: effective)))
+        context.strokePath()
         context.restoreGState()
 
         let aimed = hoveredSlice.flatMap { bookmarks.indices.contains($0) ? $0 : nil }
@@ -831,37 +899,46 @@ extension RadialMenuView {
 
     /// A thin bearing line from the rim to a small arrowhead, rotating with the aimed slice.
     private func drawNeedle(in context: CGContext, radius: CGFloat, fade: CGFloat) {
-        context.saveGState()
-        context.rotate(by: CGFloat(needle.value))
+        let angle = CGFloat(needle.value)
+        // Built in the needle's own rotated frame, then projected, so the line lies on the
+        // leaning dial rather than being pasted on top of it.
+        func place(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            tilt.project(CGPoint(x: x * cos(angle) - y * sin(angle),
+                                 y: x * sin(angle) + y * cos(angle)))
+        }
         let tip = -radius * 0.86
+        let shaft = CGMutablePath()
+        shaft.move(to: place(0, tip))
+        shaft.addLine(to: place(0, -radius * 0.30))
+        context.saveGState()
         context.setStrokeColor(RadialTheme.signal.withAlphaComponent(0.55 * fade).cgColor)
         context.setLineWidth(1.6)
         context.setLineCap(.round)
-        context.move(to: CGPoint(x: 0, y: tip))
-        context.addLine(to: CGPoint(x: 0, y: -radius * 0.30))
+        context.addPath(shaft)
         context.strokePath()
 
-        context.move(to: CGPoint(x: 0, y: tip - 5))
-        context.addLine(to: CGPoint(x: 4.2, y: tip + 4))
-        context.addLine(to: CGPoint(x: -4.2, y: tip + 4))
-        context.closePath()
+        let head = CGMutablePath()
+        head.move(to: place(0, tip - 5))
+        head.addLine(to: place(4.2, tip + 4))
+        head.addLine(to: place(-4.2, tip + 4))
+        head.closeSubpath()
         context.setFillColor(RadialTheme.signal.withAlphaComponent(0.95 * fade).cgColor)
+        context.addPath(head)
         context.fillPath()
         context.restoreGState()
     }
 
     private func drawHubReadout(in context: CGContext, radius: CGFloat, alpha: Double, index: Int) {
         let discRadius = radius * 0.42
-        let rect = CGRect(
-            x: -discRadius, y: -discRadius,
-            width: discRadius * 2, height: discRadius * 2
-        )
+        let disc = projected(ringCircle(radius: discRadius))
         context.saveGState()
         context.setFillColor(RadialTheme.hubReadoutDisc.withAlphaComponent(CGFloat(alpha)).cgColor)
-        context.fillEllipse(in: rect)
+        context.addPath(disc)
+        context.fillPath()
         context.setStrokeColor(RadialTheme.signal.withAlphaComponent(0.22 * CGFloat(alpha)).cgColor)
         context.setLineWidth(1)
-        context.strokeEllipse(in: rect)
+        context.addPath(disc)
+        context.strokePath()
 
         let string = NSAttributedString(
             string: String(RadialLayout.keyLabel(forSlice: index)).leftPadded(to: 2),
@@ -944,7 +1021,11 @@ extension RadialMenuView {
             }
         }
 
-        let body = CGPath(roundedRect: rect, cornerWidth: 15, cornerHeight: 15, transform: nil)
+        // Deliberately *not* projected. The card is a foreign body on the dial — its text,
+        // icons and hover rail are all laid out in flat ring space, so skewing only the shape
+        // would slide the type off its own card. It sits at the centre, where the tilt is a
+        // near-identity anyway, so leaving it flat is both correct and invisible.
+        let body = ringRoundedRect(rect, cornerRadius: 15)
 
         context.saveGState()
         context.translateBy(x: 0, y: -lift)
@@ -1069,16 +1150,18 @@ extension RadialMenuView {
     ) -> CGFloat {
         let diameter: CGFloat = 48
         let center = CGPoint(x: rect.minX + 24 + diameter / 2, y: -lift)
-        let disc = CGRect(
+        let discPath = CGMutablePath()
+        discPath.addEllipse(in: CGRect(
             x: center.x - diameter / 2, y: center.y - diameter / 2,
             width: diameter, height: diameter
-        )
+        ))
 
         context.saveGState()
         context.setFillColor(
             RadialTheme.hubReadoutDisc.withAlphaComponent(CGFloat(alpha) * (0.9 + 0.1 * hover)).cgColor
         )
-        context.fillEllipse(in: disc)
+        context.addPath(discPath)
+        context.fillPath()
         context.setStrokeColor(
             (hover > 0.02
                 ? RadialTheme.signal.withAlphaComponent(0.75)
@@ -1086,7 +1169,8 @@ extension RadialMenuView {
             ).cgColor
         )
         context.setLineWidth(hover > 0.02 ? 1.4 : 1)
-        context.strokeEllipse(in: disc)
+        context.addPath(discPath)
+        context.strokePath()
         context.restoreGState()
 
         let numeral = NSAttributedString(
@@ -1100,15 +1184,18 @@ extension RadialMenuView {
         let size = numeral.size()
         numeral.draw(at: CGPoint(x: center.x - size.width / 2, y: center.y - size.height / 2))
 
+        let dividerRight = center.x + diameter / 2
+        let divider = CGMutablePath()
+        divider.move(to: CGPoint(x: dividerRight + 16, y: -lift - 17))
+        divider.addLine(to: CGPoint(x: dividerRight + 16, y: -lift + 17))
         context.saveGState()
         context.setStrokeColor(RadialTheme.sliceStroke.withAlphaComponent(CGFloat(alpha)).cgColor)
         context.setLineWidth(1)
-        context.move(to: CGPoint(x: disc.maxX + 16, y: -lift - 17))
-        context.addLine(to: CGPoint(x: disc.maxX + 16, y: -lift + 17))
+        context.addPath(divider)
         context.strokePath()
         context.restoreGState()
 
-        return disc.maxX + 32
+        return dividerRight + 32
     }
 
     /// One orchestrated gesture as the dial appears: a signal arc runs once around the bezel
@@ -1122,14 +1209,20 @@ extension RadialMenuView {
         let radius = ringLayout.outerRadius + RadialTheme.bezelTickInnerGap
         let fade = CGFloat(1 - Easing.outCubic(min(1, t)))
 
+        let arc = CGMutablePath()
+        let steps = 48
+        for step in 0...steps {
+            let t = CGFloat(step) / CGFloat(steps)
+            let point = ringLayout.point(radius: radius, angle: start + (end - start) * t)
+            if step == 0 { arc.move(to: point) } else { arc.addLine(to: point) }
+        }
         context.saveGState()
         context.setStrokeColor(RadialTheme.signal.withAlphaComponent(0.85 * fade * CGFloat(alpha)).cgColor)
         context.setLineWidth(2)
-        context.setLineCap(.round)
-        context.addArc(center: .zero, radius: radius, startAngle: start, endAngle: end, clockwise: false)
+        context.addPath(projected(arc))
         context.strokePath()
 
-        let tip = ringLayout.point(radius: radius, angle: end + .pi / 2)
+        let tip = tilt.project(ringLayout.point(radius: radius, angle: end + .pi / 2))
         context.setFillColor(RadialTheme.signal.withAlphaComponent(fade * CGFloat(alpha)).cgColor)
         context.fillEllipse(in: CGRect(x: tip.x - 2.4, y: tip.y - 2.4, width: 4.8, height: 4.8))
         context.restoreGState()
@@ -1273,6 +1366,80 @@ extension RadialMenuView {
             blue: a.blueComponent + (b.blueComponent - a.blueComponent) * amount,
             alpha: a.alphaComponent + (b.alphaComponent - a.alphaComponent) * amount
         )
+    }
+}
+
+
+// MARK: - 3D projection helpers
+
+extension RadialMenuView {
+
+    /// Every ring-space path goes through the tilt before it is drawn, so the whole dial —
+    /// wedges, bezel, ticks, hub, numbers — leans as one object.
+    ///
+    /// This is a genuine perspective projection rather than an affine squash: the side of the
+    /// disc nearest the cursor is drawn slightly larger than the far side. That asymmetry is
+    /// the difference between "a circle leaning" and "a circle squashed".
+    private func projected(_ path: CGPath) -> CGPath {
+        guard !tilt.isFlat else { return path }
+        let result = CGMutablePath()
+        path.applyWithBlock { element in
+            let points = element.pointee.points
+            switch element.pointee.type {
+            case .moveToPoint:
+                result.move(to: tilt.project(points[0]))
+            case .addLineToPoint:
+                result.addLine(to: tilt.project(points[0]))
+            case .addQuadCurveToPoint:
+                result.addQuadCurve(to: tilt.project(points[1]), control: tilt.project(points[0]))
+            case .addCurveToPoint:
+                result.addCurve(
+                    to: tilt.project(points[2]),
+                    control1: tilt.project(points[0]),
+                    control2: tilt.project(points[1])
+                )
+            case .closeSubpath:
+                result.closeSubpath()
+            @unknown default:
+                break
+            }
+        }
+        return result
+    }
+
+    /// A circle in ring space, as a path so it can be projected. `CGContext.fillEllipse`
+    /// cannot be, which is why the dial draws its own.
+    private func ringCircle(radius: CGFloat) -> CGPath {
+        let segments = 64
+        let path = CGMutablePath()
+        for step in 0...segments {
+            let angle = CGFloat(step) / CGFloat(segments) * 2 * .pi
+            let point = CGPoint(x: radius * sin(angle), y: -radius * cos(angle))
+            if step == 0 { path.move(to: point) } else { path.addLine(to: point) }
+        }
+        path.closeSubpath()
+        return path
+    }
+
+    /// A rounded rectangle in ring space, densely sampled so the corners survive projection.
+    private func ringRoundedRect(_ rect: CGRect, cornerRadius: CGFloat) -> CGPath {
+        CGPath(roundedRect: rect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+    }
+
+    /// Vertical squash text takes with the dial, so type sits *on* the leaning surface
+    /// instead of floating above it. Bounded, because rotated or over-scaled labels are
+    /// harder to read than a flat one and this app is read at a glance.
+    private func inkScale(at point: CGPoint) -> CGFloat {
+        min(1.06, max(0.94, tilt.scale(at: point)))
+    }
+
+    private func stroke(_ path: CGPath, in context: CGContext, width: CGFloat, cap: CGLineCap = .butt) {
+        context.saveGState()
+        context.addPath(projected(path))
+        context.setLineWidth(width)
+        context.setLineCap(cap)
+        context.strokePath()
+        context.restoreGState()
     }
 }
 

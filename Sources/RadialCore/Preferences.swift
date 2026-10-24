@@ -5,6 +5,9 @@ public struct Preferences: Codable, Equatable {
     public var hotkey: HotkeySpec
     /// How the chosen page opens the link.
     public var openIn: OpenTarget
+    /// Bundle identifier of the browser links open in. Safari by default, so an upgrade
+    /// does not silently change where people's links land.
+    public var browserBundleID: String
     /// Open the site in the background, keeping the current tab focused.
     public var openInBackground: Bool
     /// Re-read Safari's bookmarks on every launch.
@@ -37,6 +40,7 @@ public struct Preferences: Codable, Equatable {
     public init(
         hotkey: HotkeySpec = .default,
         openIn: OpenTarget = .newTab,
+        browserBundleID: String = Browser.safari.bundleID,
         openInBackground: Bool = false,
         autoSyncOnLaunch: Bool = true,
         showNumbers: Bool = true,
@@ -47,6 +51,7 @@ public struct Preferences: Codable, Equatable {
     ) {
         self.hotkey = hotkey
         self.openIn = openIn
+        self.browserBundleID = browserBundleID
         self.openInBackground = openInBackground
         self.autoSyncOnLaunch = autoSyncOnLaunch
         self.showNumbers = showNumbers
@@ -63,6 +68,8 @@ public struct Preferences: Codable, Equatable {
         let fallback = Preferences.default
         hotkey = try container.decodeIfPresent(HotkeySpec.self, forKey: .hotkey) ?? fallback.hotkey
         openIn = try container.decodeIfPresent(OpenTarget.self, forKey: .openIn) ?? fallback.openIn
+        browserBundleID = try container.decodeIfPresent(String.self, forKey: .browserBundleID)
+            ?? fallback.browserBundleID
         openInBackground = try container.decodeIfPresent(Bool.self, forKey: .openInBackground) ?? fallback.openInBackground
         autoSyncOnLaunch = try container.decodeIfPresent(Bool.self, forKey: .autoSyncOnLaunch) ?? fallback.autoSyncOnLaunch
         showNumbers = try container.decodeIfPresent(Bool.self, forKey: .showNumbers) ?? fallback.showNumbers
@@ -75,10 +82,14 @@ public struct Preferences: Codable, Equatable {
         hotkeyMigrated = try container.decodeIfPresent(Bool.self, forKey: .hotkeyMigrated) ?? false
     }
 
+    /// The browser links open in.
+    public var browser: Browser { Browser.browser(forBundleID: browserBundleID) }
+
     /// Keeps pathological values out of the UI.
     public mutating func clamp() {
         menuRadius = min(max(menuRadius, 140), 320)
         if !hotkey.isValid { hotkey = .default }
+        if browserBundleID.isEmpty { browserBundleID = Browser.safari.bundleID }
     }
 
     /// Moves anyone still on the old ⌘R default onto ⌘E, once.

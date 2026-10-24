@@ -16,13 +16,24 @@ public struct RadialLayout: Equatable, Sendable {
     public let innerRadius: CGFloat
     public let outerRadius: CGFloat
 
-    public init(sliceCount: Int, centerRadius: CGFloat = 52, outerRadius: CGFloat = 200) {
+    /// - Parameter hubGap: Distance between the hub and the ring. Defaults to 8.5% of the
+    ///   dial's radius; callers that draw a miniature can pass a smaller one.
+    public init(
+        sliceCount: Int,
+        centerRadius: CGFloat = 52,
+        outerRadius: CGFloat = 200,
+        hubGap: CGFloat? = nil
+    ) {
         self.sliceCount = max(0, sliceCount)
         self.centerRadius = centerRadius
         // The gap between the hub and the ring is what makes the hub read as a separate
-        // physical object, so it scales with the dial instead of being a fixed 1.16×.
-        self.innerRadius = centerRadius + max(13, outerRadius * 0.085)
-        self.outerRadius = max(outerRadius, self.innerRadius + 40)
+        // physical object, so it scales with the dial. Both of these floors used to be
+        // absolute (13pt gap, 40pt ring), which is invisible on the 200pt dial and larger
+        // than the whole thing on the manager's 26pt slot gutter — the drawn wedges then
+        // escaped their frame and spilled across the rows. Everything scales now.
+        let requested = max(0, outerRadius)
+        self.innerRadius = centerRadius + (hubGap ?? max(2, requested * 0.085))
+        self.outerRadius = max(requested, self.innerRadius + requested * 0.2)
     }
 
     public var step: CGFloat {

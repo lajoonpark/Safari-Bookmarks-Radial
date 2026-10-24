@@ -285,7 +285,7 @@ struct BookmarkManagerView: View {
                 iconButton("chevron.down", help: "Move down one slot") {
                     model.moveSlot(of: bookmark, by: 1)
                 }
-                iconButton("arrow.up.right", help: "Open in Safari") {
+                iconButton("arrow.up.right", help: "Open in \(model.browserName)") {
                     model.openBookmark(bookmark)
                 }
                 iconButton("pencil", help: "Edit") {
@@ -318,7 +318,7 @@ struct BookmarkManagerView: View {
             hoveredID = hovering ? bookmark.id : (hoveredID == bookmark.id ? nil : hoveredID)
         }
         .contextMenu {
-            Button("Open in Safari") { model.openBookmark(bookmark) }
+            Button("Open in \(model.browserName)") { model.openBookmark(bookmark) }
             Button("Edit…") { editing = bookmark }
             Divider()
             Button("Move to slot 1") { model.moveToFront(bookmark) }
@@ -527,10 +527,13 @@ struct MiniDial: View {
     var body: some View {
         GeometryReader { proxy in
             let side = min(proxy.size.width, proxy.size.height)
+            // Explicit proportions, not defaults: the miniature's hub gap has to scale with
+            // it, or the ring is drawn at a fixed 40pt depth and overflows the mark.
             let layout = RadialLayout(
                 sliceCount: RadialLayout.maxSlicesPerPage,
-                centerRadius: side * 0.14,
-                outerRadius: side * 0.46
+                centerRadius: side * 0.17,
+                outerRadius: side * 0.46,
+                hubGap: side * 0.05
             )
             ZStack {
                 ForEach(0..<RadialLayout.maxSlicesPerPage, id: \.self) { index in
@@ -594,15 +597,20 @@ struct SlotGutter: View {
             if let sliceIndex {
                 GeometryReader { proxy in
                     let side = min(proxy.size.width, proxy.size.height)
+                    // Same nine wedges as the dial, shrunk to the row. Every proportion is
+                    // relative to `side`: the hub gap used to be a fixed 13pt with a 40pt
+                    // depth floor, which on a 26pt gutter drew the ring at ~59pt radius and
+                    // painted the wedges across the bookmark names.
                     let layout = RadialLayout(
                         sliceCount: max(2, sliceCount),
-                        centerRadius: side * 0.254,
-                        outerRadius: side * 0.477
+                        centerRadius: side * 0.20,
+                        outerRadius: side * 0.47,
+                        hubGap: side * 0.045
                     )
                     ZStack {
                         ForEach(0..<max(2, sliceCount), id: \.self) { index in
                             MiniSlice(layout: layout, index: index, lit: index == sliceIndex)
-                                .opacity(index == sliceIndex ? 1 : 0.55)
+                                .opacity(index == sliceIndex ? 1 : 0.42)
                         }
                     }
                     .frame(width: side, height: side)
@@ -610,11 +618,12 @@ struct SlotGutter: View {
                 }
             }
             Text("\(slot)")
-                .font(Palette.mono(isLit ? 9 : 12.5, isLit ? .semibold : .medium))
+                .font(Palette.mono(isLit ? 8.5 : 12.5, isLit ? .semibold : .medium))
                 .foregroundStyle(isLit
                     ? (emphasised ? Palette.bone : Palette.boneDim)
                     : Palette.boneFaint)
                 .monospacedDigit()
+                .shadow(color: Palette.void.opacity(0.9), radius: 1.5)
         }
         .frame(width: 26, height: 26)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: emphasised)

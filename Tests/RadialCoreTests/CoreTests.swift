@@ -633,3 +633,231 @@ final class DrawableRangeTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(drawn.sweep, 0)
     }
 }
+
+// MARK: - Miniature geometry
+
+final class MiniatureLayoutTests: XCTestCase {
+
+    /// The bug this locks down: `RadialLayout` used to floor the hub gap at 13pt and the ring
+    /// depth at 40pt, both in absolute points. On the 26pt slot gutter in the manager that
+    /// made the wedges render at ~59pt radius, so they escaped the row and drew over the
+    /// bookmark names — "the little radial slices don't line up".
+    func testMiniatureStaysInsideItsFrame() {
+        let sizes: [CGFloat] = [26, 40, 92, 120]
+        for side in sizes {
+            let layout = RadialLayout(
+                sliceCount: 9,
+                centerRadius: side * 0.20,
+                outerRadius: side * 0.47,
+                hubGap: side * 0.045
+            )
+            XCTAssertLessThanOrEqual(
+                layout.outerRadius, side / 2,
+                "the ring escaped its \(side)pt frame"
+            )
+            XCTAssertGreaterThan(
+                layout.ringDepth, 0,
+                "a \(side)pt dial collapsed to a zero-width ring"
+            )
+            XCTAssertGreaterThan(
+                layout.innerRadius, layout.centerRadius,
+                "a \(side)pt dial lost its hub gap"
+            )
+        }
+    }
+
+    /// The gutter mark must read as a wedge ring, not a plain dot: the ring needs real
+    /// depth at the size it actually renders (26pt).
+    func testGutterRingHasVisibleDepth() {
+        let side: CGFloat = 26
+        let layout = RadialLayout(
+            sliceCount: 9,
+            centerRadius: side * 0.20,
+            outerRadius: side * 0.47,
+            hubGap: side * 0.045
+        )
+        XCTAssertGreaterThan(layout.ringDepth, 5, "the ring is too thin to read at 26pt")
+        XCTAssertGreaterThan(layout.centerRadius, 4, "the hub vanished")
+        XCTAssertLessThanOrEqual(layout.outerRadius, side / 2)
+    }
+
+    /// The gap and the depth have to scale with the dial, not be fixed constants.
+    func testHubGapAndDepthScaleWithTheDial() {
+        let small = RadialLayout(sliceCount: 9, centerRadius: 7.5, outerRadius: 12, hubGap: 1.3)
+        let large = RadialLayout(sliceCount: 9, centerRadius: 52, outerRadius: 200)
+        XCTAssertLessThan(small.ringDepth, large.ringDepth)
+        XCTAssertLessThan(small.innerRadius - small.centerRadius, large.innerRadius - large.centerRadius)
+    }
+
+    /// Defaults are unchanged for the real menu, so the dial itself does not move.
+    func testDefaultDialGeometryIsUnchanged() {
+        let layout = RadialLayout(sliceCount: 9, centerRadius: 52, outerRadius: 200)
+        XCTAssertEqual(layout.innerRadius, 52 + 200 * 0.085, accuracy: 1e-9)
+        XCTAssertEqual(layout.outerRadius, 200, accuracy: 1e-9)
+    }
+
+    /// A hub gap big enough to invert the ring must not produce a negative-depth dial.
+    func testAbsurdHubGapStillLeavesARing() {
+        let layout = RadialLayout(sliceCount: 9, centerRadius: 10, outerRadius: 100, hubGap: 500)
+        XCTAssertGreaterThan(layout.outerRadius, layout.innerRadius)
+    }
+}
+
+// MARK: - Browser catalogue and open plan
+
+final class BrowserTests: XCTestCase {
+
+    func testCatalogueHasUniqueBundleIdentifiers() {
+        let ids = Browser.catalogue.map(\.bundleID)
+        XCTAssertEqual(ids.count, Set(ids).count)
+    }
+
+    func testUnknownOrMissingIdentifierFallsBackToSafari() {
+        XCTAssertEqual(Browser.browser(forBundleID: nil), .safari)
+        XCTAssertEqual(Browser.browser(forBundleID: "com.example.nope"), .safari)
+        XCTAssertEqual(Browser.browser(forBundleID: "com.google.Chrome"), .chrome)
+    }
+
+    /// Preferences saved before this setting existed must keep opening in Safari.
+    func testOlderPreferencesDefaultToSafari() throws {
+        let data = try JSONEncoder().encode(["showNumbers": true])
+        let prefs = try JSONDecoder().decode(Preferences.self, from: data)
+        XCTAssertEqual(prefs.browserBundleID, Browser.safari.bundleID)
+        XCTAssertEqual(prefs.browser, .safari)
+    }
+
+    func testBrowserChoiceSurvivesARoundTrip() throws {
+        var prefs = Preferences()
+        prefs.browserBundleID = Browser.chrome.bundleID
+        let decoded = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(prefs))
+        XCTAssertEqual(decoded.browser, .chrome)
+    }
+
+    func testInstalledListKeepsTheSelectedBrowser() {
+        // Nothing but Chrome installed, but the user picked Firefox: the picker must not
+        // silently drop their choice.
+        let available = BrowserCatalog.available(selected: .firefox) { id in
+            id == Browser.chrome.bundleID
+        }
+        XCTAssertEqual(available.first, .firefox)
+        XCTAssertTrue(available.contains(.chrome))
+        XCTAssertFalse(available.contains(.safari))
+    }
+
+    /// The reported bug: "my setting says new tab, but GitHub opens the tab that already has
+    /// GitHub in it". Launch Services reuses an existing tab, so a scriptable browser has to
+    /// be asked for a literal new tab instead.
+    func testNewTabIsScriptedRatherThanHandedToLaunchServices() {
+        XCTAssertEqual(OpenPlan.resolve(target: .newTab, in: .safari), .scripted(.newTab))
+        XCTAssertEqual(OpenPlan.resolve(target: .newTab, in: .chrome), .scripted(.newTab))
+    }
+
+    func testUnscriptableBrowserFallsBackToPlainOpen() {
+        XCTAssertEqual(OpenPlan.resolve(target: .newTab, in: .firefox), .launchServices)
+        XCTAssertEqual(OpenPlan.resolve(target: .currentTab, in: .firefox), .launchServices)
+        XCTAssertEqual(OpenPlan.resolve(target: .newWindow, in: .arc), .launchServices)
+    }
+
+    func testHonestyAboutTargetsPerBrowser() {
+        XCTAssertTrue(OpenPlan.honoursTarget(.currentTab, in: .safari))
+        XCTAssertTrue(OpenPlan.honoursTarget(.currentTab, in: .chrome))
+        // A plain open cannot promise a specific tab, but a new tab is always at least true.
+        XCTAssertFalse(OpenPlan.honoursTarget(.currentTab, in: .firefox))
+        XCTAssertTrue(OpenPlan.honoursTarget(.newTab, in: .firefox))
+    }
+
+    func testDescriptionsNameTheBrowserAndAdmitFallbacks() {
+        XCTAssertEqual(
+            OpenPlan.description(for: .newWindow, in: .chrome),
+            "New window in Google Chrome"
+        )
+        let degraded = OpenPlan.description(for: .currentTab, in: .firefox)
+        XCTAssertTrue(degraded.contains("new tab"), degraded)
+        XCTAssertTrue(degraded.contains("Firefox"), degraded)
+    }
+}
+
+// MARK: - 3D tilt
+
+final class RadialTiltTests: XCTestCase {
+
+    func testFlatTiltIsTheIdentity() {
+        let tilt = RadialTilt.flat
+        XCTAssertTrue(tilt.isFlat)
+        let point = CGPoint(x: 120, y: -80)
+        XCTAssertEqual(tilt.project(point), point)
+        XCTAssertEqual(tilt.unproject(point), point)
+        XCTAssertEqual(tilt.scale(at: point), 1, accuracy: 1e-12)
+    }
+
+    /// Hover and click must keep landing on the same slice after the dial leans, so the
+    /// projection has to be invertible to floating-point accuracy.
+    func testProjectionRoundTripsAcrossTheDial() {
+        for pitch in [-0.19, -0.05, 0.0, 0.05, 0.19] as [CGFloat] {
+            for roll in [-0.19, -0.05, 0.0, 0.05, 0.19] as [CGFloat] {
+                let tilt = RadialTilt(pitch: pitch, roll: roll, eyeDistance: 800)
+                for x in stride(from: -260.0, through: 260.0, by: 40) {
+                    for y in stride(from: -260.0, through: 260.0, by: 40) {
+                        let point = CGPoint(x: x, y: y)
+                        let restored = tilt.unproject(tilt.project(point))
+                        XCTAssertEqual(restored.x, point.x, accuracy: 1e-6)
+                        XCTAssertEqual(restored.y, point.y, accuracy: 1e-6)
+                    }
+                }
+            }
+        }
+    }
+
+    /// The point the dial leans toward must come *closer* to the viewer, i.e. get bigger.
+    /// A projection that shrinks that side looks like it is leaning away and reads wrong.
+    func testDialLeansTowardThePointer() {
+        let radius: CGFloat = 220
+        for pointer in [
+            CGPoint(x: 0, y: 200), CGPoint(x: 0, y: -200),
+            CGPoint(x: 200, y: 0), CGPoint(x: -200, y: 0),
+        ] {
+            let tilt = RadialTilt(leaningToward: pointer, radius: radius)
+            XCTAssertFalse(tilt.isFlat, "no tilt toward \(pointer)")
+            let opposite = CGPoint(x: -pointer.x, y: -pointer.y)
+            let near = tilt.scale(at: pointer)
+            let far = tilt.scale(at: opposite)
+            XCTAssertGreaterThan(near, far, "the dial leaned away from \(pointer)")
+            XCTAssertGreaterThan(near, 1, "the near side did not grow toward \(pointer)")
+            XCTAssertLessThan(far, 1, "the far side did not recede from \(pointer)")
+        }
+    }
+
+    func testTiltIsEasedInFromTheCentreAndBoundedAtTheRim() {
+        let radius: CGFloat = 200
+        let centre = RadialTilt(leaningToward: .zero, radius: radius)
+        XCTAssertTrue(centre.isFlat, "the hub should not tip the dial")
+
+        let edge = RadialTilt(leaningToward: CGPoint(x: 200, y: 0), radius: radius)
+        let angle = max(abs(edge.pitch), abs(edge.roll))
+        XCTAssertLessThanOrEqual(angle, RadialTilt.maxAngle + 1e-9)
+
+        // A pointer held past the rim must not tilt harder than the maximum.
+        let beyond = RadialTilt(leaningToward: CGPoint(x: 900, y: 0), radius: radius)
+        XCTAssertLessThanOrEqual(max(abs(beyond.pitch), abs(beyond.roll)), RadialTilt.maxAngle + 1e-9)
+
+        let halfway = RadialTilt(leaningToward: CGPoint(x: 100, y: 0), radius: radius)
+        XCTAssertLessThan(max(abs(halfway.pitch), abs(halfway.roll)), angle)
+    }
+
+    /// A lean big enough to see: at the rim the near/far size difference should be around a
+    /// tenth, not the 4% an earlier 6° setting produced (which nobody could perceive).
+    func testMaximumTiltIsActuallyPerceptible() {
+        let radius: CGFloat = 200
+        let tilt = RadialTilt(leaningToward: CGPoint(x: 0, y: radius), radius: radius)
+        let near = tilt.scale(at: CGPoint(x: 0, y: radius))
+        let far = tilt.scale(at: CGPoint(x: 0, y: -radius))
+        let asymmetry = (near - far) / far
+        XCTAssertGreaterThan(asymmetry, 0.07, "the lean is too subtle to see")
+        XCTAssertLessThan(asymmetry, 0.25, "the lean tips past an obvious ring")
+    }
+
+    func testZeroRadiusTiltDoesNotCrash() {
+        let tilt = RadialTilt(leaningToward: CGPoint(x: 10, y: 10), radius: 0)
+        XCTAssertTrue(tilt.isFlat)
+    }
+}
