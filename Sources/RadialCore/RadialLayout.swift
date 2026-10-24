@@ -122,12 +122,6 @@ public struct RadialLayout: Equatable, Sendable {
         return points
     }
 
-    // `@inline(never)` was added when this helper's inlining into an AppKit draw call crashed
-    // SILCombine ("Operand.swift:83"). That was an earlier symptom of the mismatched-`CGPoint`
-    // serialized SIL described at the top of this file, not a separate bug. The CoreGraphics
-    // import addresses the root cause, so this is likely redundant now; kept until a macOS
-    // toolchain confirms it, since the Linux build cannot exercise the SIL linker.
-    @inline(never)
     public func point(radius: CGFloat, angle: CGFloat) -> CGPoint {
         CGPoint(x: radius * sin(angle), y: -radius * cos(angle))
     }
