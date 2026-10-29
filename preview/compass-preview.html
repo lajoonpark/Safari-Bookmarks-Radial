@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Safari Radial — compass preview</title>
+<!--
+  Design harness, not shipped. `CompassRenderer.swift` is the real instrument; this page exists
+  because it renders in a browser that can be screenshotted on a Linux box, where AppKit cannot
+  build. Numbers here (caseOut, sectorIn, lidOpen, …) are the ones mirrored in
+  `CompassMetrics`, so if you change the look, change both and re-run the tests.
+-->
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
