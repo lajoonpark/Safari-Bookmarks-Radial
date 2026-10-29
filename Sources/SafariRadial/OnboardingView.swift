@@ -247,26 +247,101 @@ private struct StepPips: View {
 
 // MARK: - Art marks
 
-/// Step 1: the dial itself, mid-sweep. The product's whole idea in one shape.
+/// Step 1: the compass itself, lid open. The product's whole idea in one object.
 private struct WelcomeMark: View {
     var body: some View {
         GeometryReader { proxy in
-            let side = min(proxy.size.width, proxy.size.height) - 60
-            let layout = RadialLayout(sliceCount: 8, centerRadius: side * 0.15, outerRadius: side * 0.5)
-            ZStack {
-                ForEach(0..<8, id: \.self) { index in
-                    MiniSlice(layout: layout, index: index, lit: index == 1)
+            let side = min(proxy.size.width, proxy.size.height)
+            Canvas { context, size in
+                let metrics = CompassMetrics(cardRadius: side * 0.20)
+                let lid = CompassLid(metrics: metrics, openness: 1)
+                let camera = CompassCamera.level
+                let centre = CGPoint(x: size.width / 2, y: size.height / 2 + metrics.caseRadius * 0.34)
+
+                func screen(_ point: Point3D) -> CGPoint {
+                    let projected = camera.project(point).point
+                    return CGPoint(x: centre.x + projected.x, y: centre.y + projected.y)
                 }
-                Circle()
-                    .fill(Palette.void)
-                    .overlay(Circle().strokeBorder(Palette.rimStrong, lineWidth: 1))
-                    .frame(width: layout.centerRadius * 2, height: layout.centerRadius * 2)
-                Circle()
-                    .fill(Palette.signal)
-                    .frame(width: 3, height: 3)
+
+                func ringPath(_ radius: CGFloat, lid: CompassLid? = nil) -> Path {
+                    var path = Path()
+                    for step in 0...72 {
+                        let angle = CGFloat(step) / 72 * 2 * .pi
+                        let flat = Point3D(radius: radius, angle: angle)
+                        let point = lid.map { screen($0.swing(flat)) } ?? screen(flat)
+                        step == 0 ? path.move(to: point) : path.addLine(to: point)
+                    }
+                    path.closeSubpath()
+                    return path
+                }
+
+                // Lid, standing open behind the case.
+                context.fill(ringPath(metrics.caseRadius, lid: lid), with: .color(CompassTheme.brassMid))
+                context.stroke(ringPath(metrics.caseRadius, lid: lid),
+                               with: .color(CompassTheme.brassDeep.opacity(0.55)), lineWidth: 1)
+
+                // Case and card.
+                context.fill(ringPath(metrics.caseRadius), with: .color(CompassTheme.brassLit))
+                context.fill(ringPath(metrics.cardRadius), with: .color(CompassTheme.paper))
+
+                // A few printed degrees, so it reads as a card rather than a disc.
+                for degrees in stride(from: 0, to: 360, by: 15) {
+                    let angle = CGFloat(degrees) * .pi / 180
+                    var tick = Path()
+                    tick.move(to: screen(Point3D(radius: metrics.scaleInset * 1.02, angle: angle)))
+                    tick.addLine(to: screen(Point3D(radius: metrics.scaleOutset, angle: angle)))
+                    context.stroke(tick, with: .color(CompassTheme.inkRule.opacity(0.45)), lineWidth: 0.9)
+                }
+
+                // Sectors, with one aimed at.
+                let card = RadialLayout(
+                    sliceCount: 8,
+                    centerRadius: metrics.hubRadius,
+                    outerRadius: metrics.sectorOutset
+                )
+                for index in 0..<8 {
+                    let drawn = card.drawableRange(of: index, inset: card.step * 0.06)
+                    var wedge = Path()
+                    let steps = 8
+                    for step in 0...steps {
+                        let angle = drawn.start + drawn.sweep * CGFloat(step) / CGFloat(steps)
+                        let point = screen(Point3D(radius: metrics.sectorOutset, angle: angle))
+                        step == 0 ? wedge.move(to: point) : wedge.addLine(to: point)
+                    }
+                    for step in stride(from: steps, through: 0, by: -1) {
+                        let angle = drawn.start + drawn.sweep * CGFloat(step) / CGFloat(steps)
+                        wedge.addLine(to: screen(Point3D(radius: metrics.sectorInset, angle: angle)))
+                    }
+                    wedge.closeSubpath()
+                    let lit = index == 1
+                    if lit {
+                        context.fill(wedge, with: .color(CompassTheme.vermilion.opacity(0.16)))
+                    }
+                    context.stroke(wedge, with: .color(CompassTheme.inkRule.opacity(0.35)), lineWidth: 0.9)
+                }
+
+                // Needle, on the aimed slot.
+                var needle = Path()
+                let bearing = card.centerAngle(of: 1)
+                needle.move(to: screen(Point3D(radius: metrics.cardRadius * 0.74, angle: bearing)))
+                needle.addLine(to: screen(Point3D(radius: -metrics.cardRadius * 0.56, angle: bearing + .pi / 2)))
+                needle.addLine(to: screen(Point3D(radius: -metrics.cardRadius * 0.56, angle: bearing - .pi / 2)))
+                needle.closeSubpath()
+                context.fill(needle, with: .color(CompassTheme.vermilion))
+
+                // Hub.
+                context.fill(ringPath(metrics.hubRadius), with: .color(CompassTheme.brassDark))
+                context.fill(
+                    Path(ellipseIn: CGRect(
+                        x: centre.x - metrics.cardRadius * 0.028,
+                        y: centre.y - metrics.cardRadius * 0.028,
+                        width: metrics.cardRadius * 0.056,
+                        height: metrics.cardRadius * 0.056
+                    )),
+                    with: .color(CompassTheme.hubWindowInk)
+                )
             }
-            .frame(width: side * 1.1, height: side * 1.1)
-            .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+            .frame(width: side, height: side)
         }
     }
 }
@@ -420,48 +495,5 @@ final class OnboardingModel: ObservableObject {
             $0.hasCompletedOnboarding = true
         }
         onFinish?()
-    }
-}
-
-/// The nine-slot mark used in the manager window and on the welcome step.
-struct MiniSlice: View {
-    let layout: RadialLayout
-    let index: Int
-    let lit: Bool
-
-    var body: some View {
-        let drawn = layout.drawableRange(of: index, inset: 0.05)
-        ZStack {
-            WedgeShape(layout: layout, drawn: drawn)
-                .fill(lit ? Palette.signal.opacity(0.26) : Palette.bone.opacity(0.055))
-            WedgeShape(layout: layout, drawn: drawn)
-                .stroke(lit ? Palette.signal.opacity(0.85) : Palette.bone.opacity(0.14), lineWidth: 0.9)
-        }
-    }
-}
-
-struct WedgeShape: Shape {
-    let layout: RadialLayout
-    let drawn: (start: CGFloat, sweep: CGFloat)
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let segments = 8
-        let centre = CGPoint(x: rect.midX, y: rect.midY)
-        func point(radius: CGFloat, angle: CGFloat) -> CGPoint {
-            let p = layout.point(radius: radius, angle: angle)
-            return CGPoint(x: centre.x + p.x, y: centre.y + p.y)
-        }
-        path.move(to: point(radius: layout.outerRadius, angle: drawn.start))
-        for step in 1...segments {
-            let t = CGFloat(step) / CGFloat(segments)
-            path.addLine(to: point(radius: layout.outerRadius, angle: drawn.start + drawn.sweep * t))
-        }
-        for step in stride(from: segments, through: 0, by: -1) {
-            let t = CGFloat(step) / CGFloat(segments)
-            path.addLine(to: point(radius: layout.innerRadius, angle: drawn.start + drawn.sweep * t))
-        }
-        path.closeSubpath()
-        return path
     }
 }

@@ -517,33 +517,92 @@ struct EditBookmarkSheet: View {
 
 // MARK: - Mini dial
 
-/// The window's mark: a nine-slice dial with the first slot lit.
+/// The window's mark: the compass, small enough to sit in a header.
 ///
-/// Drawn rather than shipped as an asset so it always agrees with the real geometry, and so
-/// the app has a recognisable object in the window instead of a generic icon.
+/// Drawn from `CompassMetrics` and `RadialLayout` rather than shipped as an asset, so the mark
+/// can never drift from the real instrument — and so the app has a recognisable object in its
+/// window instead of a generic icon.
 struct MiniDial: View {
     var filled = true
 
     var body: some View {
         GeometryReader { proxy in
             let side = min(proxy.size.width, proxy.size.height)
-            // Explicit proportions, not defaults: the miniature's hub gap has to scale with
-            // it, or the ring is drawn at a fixed 40pt depth and overflows the mark.
-            let layout = RadialLayout(
-                sliceCount: RadialLayout.maxSlicesPerPage,
-                centerRadius: side * 0.17,
-                outerRadius: side * 0.46,
-                hubGap: side * 0.05
-            )
-            ZStack {
-                ForEach(0..<RadialLayout.maxSlicesPerPage, id: \.self) { index in
-                    MiniSlice(layout: layout, index: index, lit: filled && index == 0)
+            Canvas { context, size in
+                let metrics = CompassMetrics(cardRadius: side * 0.36)
+                let centre = CGPoint(x: size.width / 2, y: size.height / 2)
+                let card = RadialLayout(
+                    sliceCount: RadialLayout.maxSlicesPerPage,
+                    centerRadius: metrics.hubRadius,
+                    outerRadius: metrics.sectorOutset
+                )
+
+                // Case.
+                context.fill(
+                    Path(ellipseIn: CGRect(
+                        x: centre.x - metrics.caseRadius,
+                        y: centre.y - metrics.caseRadius,
+                        width: metrics.caseRadius * 2,
+                        height: metrics.caseRadius * 2
+                    )),
+                    with: .color(CompassTheme.brassMid)
+                )
+                // Card.
+                context.fill(
+                    Path(ellipseIn: CGRect(
+                        x: centre.x - metrics.cardRadius,
+                        y: centre.y - metrics.cardRadius,
+                        width: metrics.cardRadius * 2,
+                        height: metrics.cardRadius * 2
+                    )),
+                    with: .color(CompassTheme.paper)
+                )
+
+                // Wedges, with the first lit when the dial has contents.
+                for index in 0..<RadialLayout.maxSlicesPerPage {
+                    let lit = filled && index == 0
+                    let drawn = card.drawableRange(of: index, inset: card.step * 0.05)
+                    var path = Path()
+                    let steps = 8
+                    for step in 0...steps {
+                        let angle = drawn.start + drawn.sweep * CGFloat(step) / CGFloat(steps)
+                        let point = card.point(radius: metrics.sectorOutset, angle: angle)
+                        let screen = CGPoint(x: centre.x + point.x, y: centre.y + point.y)
+                        step == 0 ? path.move(to: screen) : path.addLine(to: screen)
+                    }
+                    for step in stride(from: steps, through: 0, by: -1) {
+                        let angle = drawn.start + drawn.sweep * CGFloat(step) / CGFloat(steps)
+                        let point = card.point(radius: metrics.sectorInset, angle: angle)
+                        path.addLine(to: CGPoint(x: centre.x + point.x, y: centre.y + point.y))
+                    }
+                    path.closeSubpath()
+                    context.fill(path, with: .color(lit
+                        ? CompassTheme.vermilion.opacity(0.30)
+                        : CompassTheme.ink.opacity(0.06)))
+                    context.stroke(path, with: .color(lit
+                        ? CompassTheme.vermilion.opacity(0.90)
+                        : CompassTheme.ink.opacity(0.20)), lineWidth: 0.8)
                 }
-                Circle()
-                    .fill(Palette.void)
-                    .overlay(Circle().strokeBorder(Palette.rimStrong, lineWidth: 1))
-                    .frame(width: layout.centerRadius * 2, height: layout.centerRadius * 2)
-                Needle(layout: layout, angle: layout.centerAngle(of: 0), active: filled)
+
+                // Needle, pointing at the first slot.
+                var needle = Path()
+                let tip = CGPoint(x: centre.x, y: centre.y - metrics.cardRadius * 0.60)
+                needle.move(to: tip)
+                needle.addLine(to: CGPoint(x: centre.x - side * 0.030, y: centre.y + metrics.cardRadius * 0.42))
+                needle.addLine(to: CGPoint(x: centre.x + side * 0.030, y: centre.y + metrics.cardRadius * 0.42))
+                needle.closeSubpath()
+                context.fill(needle, with: .color(CompassTheme.vermilion.opacity(filled ? 1 : 0.30)))
+
+                // Hub.
+                context.fill(
+                    Path(ellipseIn: CGRect(
+                        x: centre.x - metrics.hubRadius,
+                        y: centre.y - metrics.hubRadius,
+                        width: metrics.hubRadius * 2,
+                        height: metrics.hubRadius * 2
+                    )),
+                    with: .color(CompassTheme.brassDark)
+                )
             }
             .frame(width: side, height: side)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -551,33 +610,13 @@ struct MiniDial: View {
     }
 }
 
-private struct Needle: View {
-    let layout: RadialLayout
-    let angle: CGFloat
-    let active: Bool
-
-    var body: some View {
-        let radius = layout.centerRadius
-        let tip = -radius * 0.86
-        Path { path in
-            path.move(to: CGPoint(x: 0, y: tip - 6))
-            path.addLine(to: CGPoint(x: 5, y: tip + 4))
-            path.addLine(to: CGPoint(x: -5, y: tip + 4))
-            path.closeSubpath()
-        }
-        .fill(active ? Palette.signal : Palette.boneFaint)
-        .rotationEffect(.radians(Double(angle)))
-    }
-}
-
 // MARK: - Slot gutter
 
-/// The row's slot number, sitting inside a miniature of the dial with that row's own wedge
-/// lit. It is the same object as the radial, at 26pt, so the window shows *where* a bookmark
-/// sits rather than just numbering it — the one thing a plain table cannot say.
+/// The row's slot number, with the slot's *bearing* on the dial behind it.
 ///
-/// Every page is a dial of nine, so a bookmark on page 2 shows its wedge on page 2's dial —
-/// the gutter is per-page, exactly like the thing it describes.
+/// At 26pt a wedge is unreadable — the old design drew all nine and they collapsed into a
+/// smudge. What still reads at this size is a single pip at the slot's own bearing, which is
+/// the one thing a plain table cannot say: where this bookmark sits.
 struct SlotGutter: View {
     let slot: Int
     /// Slice index within its own page, or nil for a row with no slot.
@@ -589,7 +628,7 @@ struct SlotGutter: View {
 
     private var helpText: String {
         guard let sliceIndex else { return "No slot" }
-        return "Slot \(slot) — wedge \(sliceIndex + 1) of \(sliceCount) on the dial"
+        return "Slot \(slot) — bearing \(sliceIndex + 1) of \(sliceCount) on the dial"
     }
 
     var body: some View {
@@ -597,21 +636,35 @@ struct SlotGutter: View {
             if let sliceIndex {
                 GeometryReader { proxy in
                     let side = min(proxy.size.width, proxy.size.height)
-                    // Same nine wedges as the dial, shrunk to the row. Every proportion is
-                    // relative to `side`: the hub gap used to be a fixed 13pt with a 40pt
-                    // depth floor, which on a 26pt gutter drew the ring at ~59pt radius and
-                    // painted the wedges across the bookmark names.
-                    let layout = RadialLayout(
-                        sliceCount: max(2, sliceCount),
-                        centerRadius: side * 0.20,
-                        outerRadius: side * 0.47,
-                        hubGap: side * 0.045
-                    )
-                    ZStack {
-                        ForEach(0..<max(2, sliceCount), id: \.self) { index in
-                            MiniSlice(layout: layout, index: index, lit: index == sliceIndex)
-                                .opacity(index == sliceIndex ? 1 : 0.42)
-                        }
+                    Canvas { context, size in
+                        let centre = CGPoint(x: size.width / 2, y: size.height / 2)
+                        let ring = RadialLayout(
+                            sliceCount: max(2, sliceCount),
+                            centerRadius: side * 0.30,
+                            outerRadius: side * 0.44,
+                            hubGap: side * 0.035
+                        )
+                        context.stroke(
+                            Path(ellipseIn: CGRect(
+                                x: centre.x - ring.outerRadius,
+                                y: centre.y - ring.outerRadius,
+                                width: ring.outerRadius * 2,
+                                height: ring.outerRadius * 2
+                            )),
+                            with: .color(Palette.bone.opacity(0.16)),
+                            lineWidth: 1
+                        )
+                        let bearing = ring.centerAngle(of: sliceIndex)
+                        let pip = ring.point(radius: ring.outerRadius, angle: bearing)
+                        context.fill(
+                            Path(ellipseIn: CGRect(
+                                x: centre.x + pip.x - 2.6,
+                                y: centre.y + pip.y - 2.6,
+                                width: 5.2,
+                                height: 5.2
+                            )),
+                            with: .color(emphasised ? Palette.signal : Palette.bone.opacity(0.85))
+                        )
                     }
                     .frame(width: side, height: side)
                     .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
@@ -623,7 +676,6 @@ struct SlotGutter: View {
                     ? (emphasised ? Palette.bone : Palette.boneDim)
                     : Palette.boneFaint)
                 .monospacedDigit()
-                .shadow(color: Palette.void.opacity(0.9), radius: 1.5)
         }
         .frame(width: 26, height: 26)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: emphasised)

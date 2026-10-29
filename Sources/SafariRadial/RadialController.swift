@@ -59,25 +59,32 @@ final class RadialController {
 
     private func show(page: Int) {
         preferences.clamp()
+        let screen = ScreenGeometry.activeScreen()
+        let pointer = ScreenGeometry.pointerInView(screen)
+
+        // An open compass is a tall object: the lid stands a full diameter above the hinge and
+        // the lanyard bow hangs below, so it needs roughly 3.4 card-radii of height against the
+        // old dial's 1.1. The radius setting is an upper bound, not a promise — fitting it to the
+        // screen beats hanging the lid off the edge, and `fitted(toHeight:)` keeps its own floor
+        // so the numerals stay readable.
+        let available = screen.frame.height - 24
+        let fitted = CompassMetrics(cardRadius: CGFloat(preferences.menuRadius))
+            .fitted(toHeight: available)
+        let metrics = fitted
         menuView.configure(
             bookmarks: store.bookmarks(onPage: page),
             page: page,
             paging: store.paging,
             showsNumbers: preferences.showNumbers,
-            radius: CGFloat(preferences.menuRadius)
+            radius: metrics.cardRadius
         )
 
-        let screen = ScreenGeometry.activeScreen()
-        let pointer = ScreenGeometry.pointerInView(screen)
-        let radius = CGFloat(preferences.menuRadius)
-        // Keep the whole dial on screen, but only push it as far as it must be pushed. The
-        // printed number band sets the horizontal requirement, while the hint row below the
-        // band sets the vertical one. One generous margin for both would yank the dial away
-        // from the cursor near a side edge for no reason.
-        let sideMargin = radius + RadialTheme.bezelBandInset + RadialTheme.bezelBandWidth + 4
-        let topMargin = sideMargin
-        // Below the ring sit the bezel, the page pips and the key hints — roughly 126pt.
-        let bottomMargin = radius + 126
+        // Horizontal requirement: the case plus a little air.
+        let sideMargin = metrics.caseRadius + 14
+        // Vertical: the lid above, the lanyard bow and the hint row below.
+        let topMargin = metrics.lidReach() + 10
+        let bottomMargin = metrics.lugReach + 62
+
         let centerX = screen.frame.width > sideMargin * 2
             ? min(max(pointer.x, sideMargin), screen.frame.width - sideMargin)
             : screen.frame.width / 2

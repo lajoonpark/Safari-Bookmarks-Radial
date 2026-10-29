@@ -866,3 +866,184 @@ final class RadialTiltTests: XCTestCase {
         XCTAssertTrue(tilt.isFlat)
     }
 }
+
+/// The compass's geometry is load-bearing in a way the drawing never was: the whole menu is
+/// hit tested through the same projection that draws it, so a disagreement between the two
+/// fires the wrong bookmark. These pin the exactness that freedom assumes.
+final class CompassCameraTests: XCTestCase {
+
+    func testLevelCameraIsTheIdentity() {
+        let camera = CompassCamera.level
+        let point = CGPoint(x: 143, y: -87)
+        let projected = camera.project(Point3D(x: point.x, y: point.y))
+        XCTAssertEqual(projected.point.x, point.x, accuracy: 1e-9)
+        XCTAssertEqual(projected.point.y, point.y, accuracy: 1e-9)
+        XCTAssertEqual(projected.depthScale, 1, accuracy: 1e-9)
+    }
+
+    /// The case for building this on top of `RadialTilt` rather than beside it.
+    func testOnTheCardPlaneItAgreesWithRadialTiltExactly() {
+        let tilt = RadialTilt(pitch: 0.13, roll: -0.09, eyeDistance: 820)
+        let camera = CompassCamera(tilt: tilt)
+        for radius in stride(from: CGFloat(0), through: 220, by: 20) {
+            for degrees in stride(from: 0, to: 360, by: 17) {
+                let angle = CGFloat(degrees) * .pi / 180
+                let point = Point3D(radius: radius, angle: angle)
+                let viaTilt = tilt.project(CGPoint(x: point.x, y: point.y))
+                let viaCamera = camera.project(point).point
+                XCTAssertEqual(viaCamera.x, viaTilt.x, accuracy: 1e-9,
+                               "x disagreed at r=\(radius) θ=\(degrees)")
+                XCTAssertEqual(viaCamera.y, viaTilt.y, accuracy: 1e-9,
+                               "y disagreed at r=\(radius) θ=\(degrees)")
+            }
+        }
+    }
+
+    /// And the inverse is the same inverse, which is what keeps clicks on the right slice.
+    func testUnprojectionRecoversTheCard() {
+        let camera = CompassCamera(pitch: 0.17, roll: -0.12, eyeDistance: 640)
+        for radius in stride(from: CGFloat(10), through: 200, by: 19) {
+            for degrees in stride(from: 0, to: 360, by: 23) {
+                let angle = CGFloat(degrees) * .pi / 180
+                let card = CGPoint(x: radius * sin(angle), y: -radius * cos(angle))
+                let screen = camera.project(Point3D(x: card.x, y: card.y)).point
+                let recovered = camera.unprojectToCard(screen)
+                XCTAssertEqual(recovered.x, card.x, accuracy: 1e-6)
+                XCTAssertEqual(recovered.y, card.y, accuracy: 1e-6)
+            }
+        }
+    }
+
+    /// Nearest-the-viewer points must come out bigger, or the "3D" is a flat squash.
+    func testNearSideIsDrawnLargerThanTheFarSide() {
+        let camera = CompassCamera(pitch: 0.19, roll: 0, eyeDistance: 800)
+        let near = camera.project(Point3D(radius: 200, angle: .pi)).depthScale
+        let far = camera.project(Point3D(radius: 200, angle: 0)).depthScale
+        XCTAssertGreaterThan(near, far)
+    }
+
+    /// Height is what makes the case a box rather than a disc.
+    func testDepthMovesPointsUnderTheCamera() {
+        let camera = CompassCamera(pitch: 0.15, roll: 0.10, eyeDistance: 700)
+        let flat = camera.project(Point3D(x: 120, y: 60, z: 0)).point
+        let raised = camera.project(Point3D(x: 120, y: 60, z: -40)).point
+        XCTAssertNotEqual(flat.y, raised.y, accuracy: 1e-6)
+    }
+}
+
+final class CompassMetricsTests: XCTestCase {
+
+    func testEverythingScalesFromTheCardRadius() {
+        let small = CompassMetrics(cardRadius: 100)
+        let large = CompassMetrics(cardRadius: 200)
+        XCTAssertEqual(large.caseRadius, small.caseRadius * 2, accuracy: 1e-9)
+        XCTAssertEqual(large.hubRadius, small.hubRadius * 2, accuracy: 1e-9)
+        XCTAssertEqual(large.labelRadius, small.labelRadius * 2, accuracy: 1e-9)
+    }
+
+    func testBandsAreOrderedOutwardFromTheHub() {
+        let metrics = CompassMetrics(cardRadius: 200)
+        XCTAssertLessThan(metrics.hubRadius, metrics.sectorInset)
+        XCTAssertLessThan(metrics.sectorInset, metrics.labelRadius)
+        XCTAssertLessThan(metrics.labelRadius, metrics.sectorOutset)
+        XCTAssertLessThan(metrics.sectorOutset, metrics.scaleInset)
+        XCTAssertLessThan(metrics.numeralRadius, metrics.scaleOutset)
+        XCTAssertLessThan(metrics.scaleOutset, metrics.caseRadius)
+    }
+
+    func testLugHangsBelowTheCase() {
+        let metrics = CompassMetrics(cardRadius: 200)
+        XCTAssertGreaterThan(metrics.lugReach, metrics.caseRadius)
+    }
+
+    /// An open lid stands a full diameter from its hinge, which is why an open compass is much
+    /// taller than it is wide — and why the dial has to be fitted to the screen, not centred.
+    func testOpenInstrumentIsMuchTallerThanItIsWide() {
+        let metrics = CompassMetrics(cardRadius: 200)
+        XCTAssertGreaterThan(metrics.openHeight, metrics.caseRadius * 2.5)
+    }
+
+    func testFittingShrinksRatherThanOverflowing() {
+        let metrics = CompassMetrics(cardRadius: 320)
+        let fitted = metrics.fitted(toHeight: 600)
+        XCTAssertLessThan(fitted.cardRadius, metrics.cardRadius)
+        XCTAssertLessThanOrEqual(fitted.openHeight, 600 + 1)
+    }
+
+    func testFittingLeavesAComfortableInstrumentAlone() {
+        let metrics = CompassMetrics(cardRadius: 160)
+        XCTAssertEqual(metrics.fitted(toHeight: 2000), metrics)
+    }
+
+    /// The floor is legibility: below it the numerals stop being readable and the keyboard
+    /// mapping becomes guesswork, so it beats fitting the screen.
+    func testFittingRefusesToGoIllegiblySmall() {
+        let metrics = CompassMetrics(cardRadius: 320)
+        XCTAssertGreaterThanOrEqual(metrics.fitted(toHeight: 200).cardRadius, 110)
+    }
+}
+
+final class CompassLidTests: XCTestCase {
+
+    private let metrics = CompassMetrics(cardRadius: 200)
+
+    func testShutLidLeavesPointsWhereTheyWere() {
+        let lid = CompassLid(metrics: metrics, openness: 0)
+        let point = Point3D(x: 60, y: -180)
+        let swung = lid.swing(point)
+        XCTAssertEqual(swung.x, point.x, accuracy: 1e-9)
+        XCTAssertEqual(swung.y, point.y, accuracy: 1e-9)
+        XCTAssertEqual(swung.z, point.z, accuracy: 1e-9)
+    }
+
+    /// The bug the design harness found: a lid smaller than the case detaches as it opens.
+    /// With the hinge on the disc's own rim, the hinge line is a fixed point at every angle.
+    func testHingeLineNeverMoves() {
+        for steps in 0...20 {
+            let lid = CompassLid(metrics: metrics, openness: CGFloat(steps) / 20)
+            for x in stride(from: CGFloat(-200), through: 200, by: 50) {
+                let onHinge = Point3D(x: x, y: lid.hingeY, z: lid.hingeZ)
+                let swung = lid.swing(onHinge)
+                XCTAssertEqual(swung.x, onHinge.x, accuracy: 1e-9)
+                XCTAssertEqual(swung.y, onHinge.y, accuracy: 1e-9)
+                XCTAssertEqual(swung.z, onHinge.z, accuracy: 1e-9)
+            }
+        }
+    }
+
+    /// The lid closes *down over* the case, so its far edge is the bottom of the disc: a full
+    /// diameter from the hinge, not zero. Opening swings that edge up past the hinge and out
+    /// toward the viewer.
+    func testOpeningLiftsTheFarEdgeUpAndTowardTheViewer() {
+        let shut = CompassLid(metrics: metrics, openness: 0)
+        let open = CompassLid(metrics: metrics, openness: 1)
+        let farEdge = Point3D(x: 0, y: shut.hingeY + 2 * metrics.caseRadius)
+        XCTAssertGreaterThan(shut.swing(farEdge).y, 0, "shut, the lid's far edge sits over the case")
+        XCTAssertLessThan(open.swing(farEdge).y, shut.hingeY,
+                          "open, it must have risen clear above the hinge")
+        XCTAssertGreaterThan(open.swing(farEdge).z, shut.swing(farEdge).z,
+                             "and swung out toward the viewer")
+    }
+
+    /// Straight up is the moment the lid stands perpendicular to the card — the pose that
+    /// makes its inside face most legible.
+    func testAtRightAnglesTheLidStandsSquareToTheCard() {
+        let quarter = CompassLid(metrics: metrics, openness: 90 / 112)
+        let farEdge = Point3D(x: 0, y: quarter.hingeY + 2 * metrics.caseRadius, z: quarter.hingeZ)
+        let swung = quarter.swing(farEdge)
+        XCTAssertEqual(swung.y, quarter.hingeY, accuracy: 0.5)
+        XCTAssertEqual(swung.z - quarter.hingeZ, 2 * metrics.caseRadius, accuracy: 0.5)
+    }
+
+    func testOpennessIsClampedToTheAnglesWeSupport() {
+        XCTAssertEqual(CompassLid(metrics: metrics, openness: -3).openness, 0)
+        XCTAssertEqual(CompassLid(metrics: metrics, openness: 9).openness, 1)
+    }
+
+    /// The gate that stops a fast summon-and-click from firing a slice the user never saw.
+    func testCardOnlyRevealsOnceTheLidHasClearedIt() {
+        XCTAssertFalse(CompassLid(metrics: metrics, openness: 0.2).revealsCard)
+        XCTAssertFalse(CompassLid(metrics: metrics, openness: 0.5).revealsCard)
+        XCTAssertTrue(CompassLid(metrics: metrics, openness: 1).revealsCard)
+    }
+}

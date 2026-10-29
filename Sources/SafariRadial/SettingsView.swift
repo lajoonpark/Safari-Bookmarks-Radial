@@ -192,22 +192,31 @@ struct SettingsView: View {
         section("The dial") {
             toggle("Print slot numbers inside the dial", isOn: model.preferences.showNumbers, action: model.setShowNumbers)
 
-            HStack(spacing: 10) {
-                Text("Size")
-                    .font(Palette.display(12, .regular))
-                    .foregroundStyle(Palette.bone)
-                Slider(
-                    value: Binding(
-                        get: { model.preferences.menuRadius },
-                        set: { model.setMenuRadius($0) }
-                    ),
-                    in: 140...320
-                )
-                Text("\(Int(model.preferences.menuRadius))")
-                    .font(Palette.mono(10.5))
-                    .foregroundStyle(Palette.boneDim)
-                    .frame(width: 28, alignment: .trailing)
-                    .monospacedDigit()
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 10) {
+                    Text("Size")
+                        .font(Palette.display(12, .regular))
+                        .foregroundStyle(Palette.bone)
+                    Slider(
+                        value: Binding(
+                            get: { model.preferences.menuRadius },
+                            set: { model.setMenuRadius($0) }
+                        ),
+                        in: 140...320
+                    )
+                    Text("\(Int(model.preferences.menuRadius))")
+                        .font(Palette.mono(10.5))
+                        .foregroundStyle(Palette.boneDim)
+                        .frame(width: 28, alignment: .trailing)
+                        .monospacedDigit()
+                }
+                // The compass needs far more room than the old flat dial did, so the slider is
+                // an upper bound rather than a promise. Saying so is better than silently
+                // shrinking the instrument on the screens that cannot fit it.
+                Text("The open compass is tall. On smaller screens it opens a little smaller than this.")
+                    .font(Palette.display(10.5, .regular))
+                    .foregroundStyle(Palette.boneFaint)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

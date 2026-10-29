@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Safari Radial — compass preview</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #17130e; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .hint {
+    position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+    font: 11px ui-monospace, Menlo, monospace; color: rgba(240,226,196,.34);
+    letter-spacing: .16em; text-transform: uppercase; user-select: none;
+    pointer-events: none; white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hint">move to tilt · 1–9 aim · esc close</div>
+<script>
+// ---------------------------------------------------------------------------
+// Design harness for the compass. Everything here is expressed the way
+// RadialCore/Compass.swift and SafariRadial/CompassRenderer.swift express it:
+// a flat instrument built in centred "card space", tilted by a homography,
+// with the lid on its own hinge. Not shipped.
+// ---------------------------------------------------------------------------
+const Q = new URLSearchParams(location.search);
+const FREEZE = Q.has('freeze') ? parseFloat(Q.get('freeze')) : null;
+const RADIUS_OVERRIDE = Q.has('r') ? parseFloat(Q.get('r')) : null;
+
+const SLICES = [
+  { title: "GitHub",          sub: "github.com" },
+  { title: "Hacker News",     sub: "news.ycombinator.com" },
+  { title: "Apple Developer", sub: "developer.apple.com" },
+  { title: "Swift",           sub: "swift.org" },
+  { title: "Linear",          sub: "linear.app" },
+  { title: "Figma",           sub: "figma.com" },
+  { title: "Dribbble",        sub: "dribbble.com" },
+  { title: "Notion",          sub: "notion.so" },
+  { title: "Are.na",          sub: "are.na" }
+];
+
+// Colours sampled from the reference: warm cream card, tarnished brass, sepia ink.
+const C = {
+  paper:     '#dccdaa',
+  paperLit:  '#eaddbe',
+  paperDeep: '#bda87e',
+  paperEdge: '#87704a',
+  ink:       '#33261a',
+  inkSoft:   '#5d4a34',
+  vermilion: '#a13b28',
+  // Tarnished brass: the highlights stay warm rather than white, and the darks
+  // go olive instead of chocolate, which is the difference between "carried" and
+  // "polished this morning".
+  brassHi:   '#e3d0a2',
+  brassLit:  '#c6a469',
+  brassMid:  '#9a7946',
+  brassDark: '#6a5230',
+  brassDeep: '#39301e'
+};
+
+// Proportions, as multiples of the card radius R.
+const P = {
+  card:      1.000,
+  caseOut:   1.175,
+  wall:      0.085,
+  top:       0.020,
+  hub:       0.185,
+  sectorIn:  0.250,
+  sectorOut: 0.880,
+  scaleIn:   0.895,
+  scaleOut:  0.985,
+  numeralR:  0.930,   // in a gate cut through the tick ring, on cream
+  labelR:    0.575,
+  lidOpen:   112
+};
+
+// ── Deterministic wear ─────────────────────────────────────────────────────
+function rng(seed) {
+  return function () {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+const R0 = rng(9157);
+const PATINA = Array.from({ length: 30 }, () => {
+  const a = R0() * Math.PI * 2;
+  const r = 0.94 + R0() * 0.20;
+  return { a, r, w: 0.10 + R0() * 0.20, a2: 0.05 + R0() * 0.10 };
+});
+const BUFF = Array.from({ length: 11 }, () => {
+  const a = R0() * Math.PI * 2;
+  return { a, len: 0.25 + R0() * 0.55, r: 1.02 + R0() * 0.10, a2: 0.06 + R0() * 0.10 };
+});
+const AGED = Array.from({ length: 9 }, () => ({
+  x: (R0() - 0.5) * 1.4, y: (R0() - 0.5) * 1.4,
+  r: 0.16 + R0() * 0.30, a: 0.030 + R0() * 0.045
+}));
+const FOXING = Array.from({ length: 22 }, () => ({
+  x: (R0() - 0.5) * 1.5, y: (R0() - 0.5) * 1.5,
+  r: 0.010 + R0() * 0.045, a: 0.05 + R0() * 0.10
+}));
+
+// ── Springs, identical integrator to Animation.swift ───────────────────────
+class Spring {
+  constructor(v, k, d) { this.value = v; this.target = v; this.velocity = 0; this.k = k; this.d = d; }
+  get moving() { return Math.abs(this.target - this.value) > 5e-4 || Math.abs(this.velocity) > 5e-4; }
+  step(dt) {
+    const clamped = Math.min(dt, 1 / 30);
+    const steps = Math.max(1, Math.ceil(clamped / (1 / 240)));
+    const h = clamped / steps;
+    for (let i = 0; i < steps; i++) {
+      this.velocity += (this.k * (this.target - this.value) - this.d * this.velocity) * h;
+      this.value += this.velocity * h;
+    }
+    if (!this.moving) { this.value = this.target; this.velocity = 0; }
+    return this.value;
+  }
+}
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0, DPR = 1, R = 200;
+let O = { x: 0, y: 0 };
+let pointer = { x: 0, y: 0 };
+let hoveredSlice = null;
+
+const S = {
+  open:   new Spring(0, 240, 25),
+  lid:    new Spring(0, 200, 24),
+  pitch:  new Spring(0, 170, 26),
+  roll:   new Spring(0, 170, 26),
+  needle: new Spring(0, 300, 26),
+  hub:    new Spring(0, 380, 28),
+  hover:  SLICES.map(() => new Spring(0, 420, 30))
+};
+
+// ── Projection ─────────────────────────────────────────────────────────────
+function project(x, y, z) {
+  const cr = Math.cos(S.roll.value), sr = Math.sin(S.roll.value);
+  const cp = Math.cos(S.pitch.value), sp = Math.sin(S.pitch.value);
+  const x1 =  x * cr + z * sr;
+  const z1 = -x * sr + z * cr;
+  const y1 =  y * cp - z1 * sp;
+  const z2 =  y * sp + z1 * cp;
+  const d = R * 4;
+  const s = d / (d - z2);
+  return { x: x1 * s, y: y1 * s, s, z: z2 };
+}
+
+let lidAngle = 0;
+const HINGE_Y = () => -R * P.caseOut;
+const HINGE_Z = () => R * P.top;
+
+function projectLid(x, y, z) {
+  const rel = y - HINGE_Y();
+  const ca = Math.cos(lidAngle), sa = Math.sin(lidAngle);
+  return project(x, HINGE_Y() + rel * ca, HINGE_Z() - rel * sa + z);
+}
+
+const TAU = Math.PI * 2;
+const step = () => TAU / SLICES.length;
+const norm = a => ((a % TAU) + TAU) % TAU;
+
+function ringPts(r, steps, mapper) {
+  const out = [];
+  for (let i = 0; i <= steps; i++) {
+    const a = i / steps * TAU;
+    out.push(mapper(r * Math.sin(a), -r * Math.cos(a), 0));
+  }
+  return out;
+}
+
+function tracePath(pts) {
+  ctx.beginPath();
+  pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  ctx.closePath();
+}
+
+function traceLine(pts) {
+  ctx.beginPath();
+  pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+}
+
+// Two subpaths of opposite winding: fills as an annulus under 'evenodd'.
+function annulus(rOuter, rInner, mapper = project) {
+  const outer = ringPts(rOuter, 110, mapper);
+  const inner = ringPts(rInner, 110, mapper).reverse();
+  ctx.beginPath();
+  outer.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  ctx.closePath();
+  inner.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  ctx.closePath();
+}
+
+function sectorPts(i, inset, inner, outer, mapper) {
+  const half = step() / 2 - inset;
+  const c = i * step();
+  const pts = [];
+  const n = 10;
+  for (let k = 0; k <= n; k++) {
+    const a = c - half + (2 * half) * k / n;
+    pts.push(mapper(outer * Math.sin(a), -outer * Math.cos(a), 0));
+  }
+  for (let k = n; k >= 0; k--) {
+    const a = c - half + (2 * half) * k / n;
+    pts.push(mapper(inner * Math.sin(a), -inner * Math.cos(a), 0));
+  }
+  return pts;
+}
+
+// ── Text ───────────────────────────────────────────────────────────────────
+function text(str, anchor, o) {
+  const s = Math.min(1.07, Math.max(0.93, anchor.s));
+  const size = (o.size || 10) * s;
+  ctx.save();
+  ctx.translate(anchor.x, anchor.y);
+  ctx.scale(1, (o.squash || 1) * s);
+  ctx.font = `${o.weight || ''} ${size}px ${o.font || 'Georgia, "Times New Roman", serif'}`;
+  ctx.fillStyle = o.color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  if (o.tracking) ctx.letterSpacing = `${o.tracking * s}px`;
+  ctx.fillText(str, 0, 0);
+  ctx.restore();
+}
+
+const SERIF = 'Georgia, "Times New Roman", serif';
+const MONO = 'ui-monospace, Menlo, monospace';
+
+// ── Materials ──────────────────────────────────────────────────────────────
+let grain = null;
+function buildGrain() {
+  const size = 96;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  const img = g.createImageData(size, size);
+  const r = rng(4001);
+  for (let i = 0; i < size * size; i++) {
+    const v = 128 + (r() - 0.5) * 70;
+    img.data[i * 4] = v;
+    img.data[i * 4 + 1] = v * 0.96;
+    img.data[i * 4 + 2] = v * 0.86;
+    img.data[i * 4 + 3] = 20;
+  }
+  g.putImageData(img, 0, 0);
+  grain = ctx.createPattern(c, 'repeat');
+}
+
+function grainFill(extent) {
+  ctx.save();
+  ctx.fillStyle = grain;
+  ctx.fillRect(-extent, -extent, extent * 2, extent * 2);
+  ctx.restore();
+}
+
+// ── Frame ──────────────────────────────────────────────────────────────────
+function drawBackdrop() {
+  const radius = Math.max(R * 2.6, 460);
+  const g = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
+  g.addColorStop(0, 'rgba(19,15,10,0.90)');
+  g.addColorStop(0.46, 'rgba(19,15,10,0.62)');
+  g.addColorStop(1, 'rgba(19,15,10,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(-O.x, -O.y, W, H);
+}
+
+function drawContactShadow() {
+  const r = R * P.caseOut;
+  const g = ctx.createRadialGradient(0, R * 0.14, r * 0.5, 0, R * 0.14, r * 1.5);
+  g.addColorStop(0, 'rgba(0,0,0,0.62)');
+  g.addColorStop(0.62, 'rgba(0,0,0,0.30)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.save();
+  ctx.scale(0.95, 1.06);
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(0, R * 0.14, r * 1.5, 0, TAU);
+  ctx.fill();
+  ctx.restore();
+}
+
+// ── Lid ────────────────────────────────────────────────────────────────────
+function drawLid() {
+  if (lidAngle < 0.02) return;
+  const outer = R * P.caseOut;
+  const faces = Math.max(0, Math.sin(lidAngle));
+
+  // Underside, nudged so a rim shows on the away-turned edge.
+  const thick = R * 0.030;
+  ctx.save();
+  ctx.translate(0, -thick * 0.9);
+  tracePath(ringPts(outer, 90, projectLid));
+  const grit = ctx.createLinearGradient(-outer, -outer, outer, outer);
+  grit.addColorStop(0, '#2b1e10');
+  grit.addColorStop(0.5, '#4a3620');
+  grit.addColorStop(1, '#1d1409');
+  ctx.fillStyle = grit;
+  ctx.fill();
+  ctx.restore();
+
+  // Face.
+  tracePath(ringPts(outer, 90, projectLid));
+  const face = ctx.createLinearGradient(-outer * 0.8, -outer, outer * 0.9, outer);
+  face.addColorStop(0, C.brassLit);
+  face.addColorStop(0.38, C.brassMid);
+  face.addColorStop(0.72, C.brassDark);
+  face.addColorStop(1, C.brassDeep);
+  ctx.fillStyle = face;
+  ctx.fill();
+
+  // Inside of the lid: a turned recess with the maker's mark.
+  ctx.save();
+  tracePath(ringPts(outer, 90, projectLid));
+  ctx.clip();
+  const inner = outer * 0.80;
+  tracePath(ringPts(inner, 90, projectLid));
+  const recess = ctx.createRadialGradient(0, -outer, inner * 0.1, 0, -outer, inner * 1.05);
+  recess.addColorStop(0, '#6d5a38');
+  recess.addColorStop(0.55, '#54452a');
+  recess.addColorStop(1, '#33291a');
+  ctx.fillStyle = recess;
+  ctx.fill();
+
+  for (let i = 1; i <= 7; i++) {
+    traceLine(ringPts(inner * i / 7.4, 80, projectLid));
+    ctx.strokeStyle = `rgba(28,22,12,${0.16 + 0.03 * i})`;
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+  }
+
+  const hub = projectLid(0, -outer, 0);
+  text('SAFARI  RADIAL', { x: hub.x, y: hub.y - outer * 0.19 * hub.s, s: hub.s }, {
+    size: 8.5, font: SERIF, color: 'rgba(214,196,158,.55)', tracking: 1.6
+  });
+  text('COMPENSATED', { x: hub.x, y: hub.y + outer * 0.19 * hub.s, s: hub.s }, {
+    size: 6.0, font: MONO, color: 'rgba(206,188,150,.40)', tracking: 1.1
+  });
+  ctx.restore();
+
+  tracePath(ringPts(outer, 90, projectLid));
+  ctx.strokeStyle = `rgba(250,238,208,${0.10 + 0.30 * faces})`;
+  ctx.lineWidth = 1.1;
+  ctx.stroke();
+}
+
+// The lid's shadow, thrown down onto the card. Drawn between the case and the
+// lid so it darkens what is beneath without dimming the lid itself.
+function drawLidShadow() {
+  if (lidAngle < 0.05) return;
+  const lift = Math.sin(Math.min(Math.PI, lidAngle));
+  // The lid pivots up and back, so its shadow pools just behind the hinge and
+  // shrinks as the lid turns away from the card.
+  const spread = R * (0.95 - 0.25 * lift);
+  const g = ctx.createRadialGradient(0, -R * P.caseOut * 0.86, spread * 0.10, 0, -R * P.caseOut * 0.86, spread);
+  g.addColorStop(0, `rgba(26,18,9,${0.34 * lift})`);
+  g.addColorStop(0.55, `rgba(26,18,9,${0.16 * lift})`);
+  g.addColorStop(1, 'rgba(26,18,9,0)');
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(0, -R * P.caseOut * 0.86, spread, 0, TAU);
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.restore();
+}
+
+// ── Case ───────────────────────────────────────────────────────────────────
+function drawCaseWall() {
+  const outer = R * P.caseOut;
+  const n = 72;
+  const band = [];
+  for (let i = 0; i <= n; i++) {
+    const a = i / n * TAU;
+    band.push(project(outer * Math.sin(a), -outer * Math.cos(a), -R * P.wall));
+  }
+  for (let i = n; i >= 0; i--) {
+    const a = i / n * TAU;
+    band.push(project(outer * Math.sin(a), -outer * Math.cos(a), R * P.top));
+  }
+  tracePath(band);
+  const g = ctx.createLinearGradient(-outer, -outer, outer, outer);
+  g.addColorStop(0, '#3a2a15');
+  g.addColorStop(0.35, '#57401f');
+  g.addColorStop(0.7, '#2e2110');
+  g.addColorStop(1, '#1c1409');
+  ctx.fillStyle = g;
+  ctx.fill();
+}
+
+function drawBrass() {
+  const outer = R * P.caseOut;
+  const inner = R * P.card;
+
+  annulus(outer, inner);
+  const g = ctx.createLinearGradient(-outer * 0.72, -outer * 0.78, outer * 0.72, outer * 0.78);
+  g.addColorStop(0.00, C.brassLit);
+  g.addColorStop(0.18, C.brassMid);
+  g.addColorStop(0.46, C.brassLit);
+  g.addColorStop(0.70, C.brassMid);
+  g.addColorStop(0.88, C.brassDark);
+  g.addColorStop(1.00, C.brassDeep);
+  ctx.fillStyle = g;
+  ctx.fill('evenodd');
+
+  ctx.save();
+  annulus(outer, inner);
+  ctx.clip('evenodd');
+
+  grainFill(R * 1.5);
+
+  PATINA.forEach(b => {
+    const p = project(b.r * R * Math.sin(b.a), -b.r * R * Math.cos(b.a), R * P.top);
+    const rr = b.w * R * p.s;
+    const gg = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rr);
+    gg.addColorStop(0, 'rgba(74,72,50,1)');
+    gg.addColorStop(0.6, 'rgba(88,80,52,0.55)');
+    gg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.globalAlpha = b.a2;
+    ctx.fillStyle = gg;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, rr, 0, TAU);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  BUFF.forEach(b => {
+    const p0 = project(b.r * R * Math.sin(b.a), -b.r * R * Math.cos(b.a), R * P.top);
+    const p1 = project(b.r * R * Math.sin(b.a + b.len), -b.r * R * Math.cos(b.a + b.len), R * P.top);
+    ctx.save();
+    ctx.globalAlpha = b.a2;
+    ctx.strokeStyle = C.brassHi;
+    ctx.lineWidth = Math.max(1.4, R * 0.012);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y);
+    ctx.lineTo(p1.x, p1.y);
+    ctx.stroke();
+    ctx.restore();
+  });
+
+  const ridges = 190;
+  for (let i = 0; i < ridges; i++) {
+    const a = i / ridges * TAU;
+    const r0 = outer * 0.952, r1 = outer;
+    const p0 = project(r0 * Math.sin(a), -r0 * Math.cos(a), R * P.top);
+    const p1 = project(r1 * Math.sin(a), -r1 * Math.cos(a), R * P.top);
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y);
+    ctx.lineTo(p1.x, p1.y);
+    ctx.strokeStyle = i % 2 ? 'rgba(252,240,212,.15)' : 'rgba(38,26,12,.22)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  const sheen = ctx.createLinearGradient(-outer, -outer, -outer * 0.1, -outer * 0.05);
+  sheen.addColorStop(0, 'rgba(255,244,208,.16)');
+  sheen.addColorStop(1, 'rgba(255,246,218,0)');
+  ctx.fillStyle = sheen;
+  ctx.fillRect(-outer, -outer, outer * 2, outer * 2);
+  ctx.restore();
+
+  tracePath(ringPts(outer, 110, project));
+  ctx.strokeStyle = 'rgba(30,21,10,.62)';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  tracePath(ringPts(inner, 110, project));
+  ctx.strokeStyle = 'rgba(30,21,10,.50)';
+  ctx.lineWidth = 1.3;
+  ctx.stroke();
+
+  tracePath(ringPts(inner * 0.986, 110, project));
+  ctx.strokeStyle = 'rgba(252,240,212,.14)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+// ── Lanyard lug and hinge ──────────────────────────────────────────────────
+// Both are built in card space and projected, so they cannot drift off the case.
+function drawLug() {
+  const outer = R * P.caseOut;
+  const w = R * 0.070;
+  const top = outer - R * 0.055;
+  const stemEnd = outer + R * 0.070;
+  const z = -R * P.wall * 0.45;
+
+  const bowCy = outer + R * 0.128;
+  const bowR = R * 0.062;
+
+  ctx.save();
+  tracePath([
+    project(-w, top, z), project(w, top, z),
+    project(w * 0.78, stemEnd, z), project(-w * 0.78, stemEnd, z)
+  ]);
+  const sg = ctx.createLinearGradient(-w, 0, w, 0);
+  sg.addColorStop(0, '#4a3418');
+  sg.addColorStop(0.28, C.brassLit);
+  sg.addColorStop(0.60, C.brassMid);
+  sg.addColorStop(1, '#3f2d14');
+  ctx.fillStyle = sg;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(28,19,9,.55)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  const bow = [];
+  for (let i = 0; i <= 64; i++) {
+    const a = i / 64 * TAU;
+    bow.push(project(bowR * Math.sin(a), bowCy - bowR * Math.cos(a), z));
+  }
+  tracePath(bow);
+  ctx.lineWidth = R * 0.020;
+  const bg = ctx.createLinearGradient(-bowR, bowCy - bowR, bowR, bowCy + bowR);
+  bg.addColorStop(0, '#3d2c14');
+  bg.addColorStop(0.28, C.brassHi);
+  bg.addColorStop(0.55, C.brassMid);
+  bg.addColorStop(1, '#3a2a13');
+  ctx.strokeStyle = bg;
+  ctx.stroke();
+
+  const hl = [];
+  for (let i = 0; i <= 24; i++) {
+    const a = -Math.PI * 0.75 + (Math.PI * 0.9) * i / 24;
+    hl.push(project((bowR + R * 0.004) * Math.sin(a), bowCy - (bowR + R * 0.004) * Math.cos(a), z));
+  }
+  traceLine(hl);
+  ctx.strokeStyle = 'rgba(252,242,216,.42)';
+  ctx.lineWidth = 1.1;
+  ctx.stroke();
+  ctx.restore();
+}
+
+// The hinge barrel across the top of the case. It is what makes an open lid read
+// as attached rather than floating.
+function drawHinge() {
+  const outer = R * P.caseOut;
+  // A continuous barrel with three knuckles, not three beads: the outer two are
+  // drawn as short capsules joined by a thinner shaft.
+  const y = -R * P.caseOut;
+  const shaftA = project(-R * 0.150, y, -R * P.top * 0.5);
+  const shaftB = project(R * 0.150, y, -R * P.top * 0.5);
+  ctx.beginPath();
+  ctx.moveTo(shaftA.x, shaftA.y);
+  ctx.lineTo(shaftB.x, shaftB.y);
+  ctx.strokeStyle = C.brassMid;
+  ctx.lineWidth = R * 0.026;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  for (const cx of [-R * 0.135, 0, R * 0.135]) {
+    const r = R * (cx === 0 ? 0.034 : 0.030);
+    const p = project(cx, -outer, -R * P.top * 0.5);
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y, r * p.s * 1.5, r * p.s, 0, 0, TAU);
+    const g = ctx.createLinearGradient(p.x, p.y - r, p.x, p.y + r);
+    g.addColorStop(0, C.brassHi);
+    g.addColorStop(0.5, C.brassMid);
+    g.addColorStop(1, C.brassDeep);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(30,21,10,.5)';
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+  }
+}
+
+// ── Card ───────────────────────────────────────────────────────────────────
+function drawCard() {
+  const r = R * P.card;
+
+  ctx.save();
+  tracePath(ringPts(r, 110, project));
+  ctx.clip();
+
+  const g = ctx.createRadialGradient(-r * 0.30, -r * 0.36, r * 0.06, 0, 0, r * 1.04);
+  g.addColorStop(0.00, C.paperLit);
+  g.addColorStop(0.34, C.paper);
+  g.addColorStop(0.68, C.paperDeep);
+  g.addColorStop(0.90, '#a08b60');
+  g.addColorStop(1.00, C.paperEdge);
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 1.1, 0, TAU);
+  ctx.fill();
+
+  grainFill(R * 1.2);
+
+  FOXING.forEach(f => {
+    const p = project(f.x * R, f.y * R, R * P.top);
+    const rr = f.r * R * p.s;
+    const gg = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rr);
+    gg.addColorStop(0, 'rgba(122,94,54,1)');
+    gg.addColorStop(1, 'rgba(122,94,54,0)');
+    ctx.globalAlpha = f.a;
+    ctx.fillStyle = gg;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, rr, 0, TAU);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+
+  // Rub ring: a century of the lid closing on the same spot has polished the
+  // paper just outside the hub.
+  const rub = ctx.createRadialGradient(0, 0, r * 0.22, 0, 0, r * 0.46);
+  rub.addColorStop(0, 'rgba(246,238,214,0.10)');
+  rub.addColorStop(0.5, 'rgba(246,238,214,0.05)');
+  rub.addColorStop(1, 'rgba(246,238,214,0)');
+  ctx.fillStyle = rub;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.46, 0, TAU);
+  ctx.fill();
+
+  // Grime where the card has sat against the brass for decades: dark all the way
+  // round the seat, heaviest at the bottom where dust settles.
+  const seat = ctx.createRadialGradient(0, 0, r * 0.80, 0, R * 0.05, r * 1.02);
+  seat.addColorStop(0, 'rgba(96,72,40,0)');
+  seat.addColorStop(0.72, 'rgba(96,72,40,0.10)');
+  seat.addColorStop(1, 'rgba(76,54,28,0.30)');
+  ctx.fillStyle = seat;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 1.05, 0, TAU);
+  ctx.fill();
+
+  // Two tide lines: age where a drop of water once dried.
+  [[0.62, -0.55, 0.30, 0.75], [-0.70, 0.30, 0.20, 0.60]].forEach(([x, y, rr, a]) => {
+    const p = project(x * R, y * R, R * P.top);
+    const g2 = ctx.createRadialGradient(p.x, p.y, rr * R * 0.82, p.x, p.y, rr * R);
+    g2.addColorStop(0, 'rgba(120,92,52,0)');
+    g2.addColorStop(0.85, `rgba(120,92,52,${0.05 * a})`);
+    g2.addColorStop(1, `rgba(110,84,46,${0.16 * a})`);
+    ctx.fillStyle = g2;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, rr * R * p.s, 0, TAU);
+    ctx.fill();
+  });
+
+  // Uneven ageing: broad, very soft blotches so the paper is never one flat tone.
+  AGED.forEach(b => {
+    const p = project(b.x * R, b.y * R, R * P.top);
+    const rr = b.r * R * p.s;
+    const g2 = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rr);
+    g2.addColorStop(0, 'rgba(132,102,58,1)');
+    g2.addColorStop(1, 'rgba(132,102,58,0)');
+    ctx.globalAlpha = b.a;
+    ctx.fillStyle = g2;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, rr, 0, TAU);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function drawCardPrinting() {
+  const z = R * P.top;
+
+  for (let i = 0; i < 8; i++) {
+    traceLine(ringPts(R * (P.sectorOut + 0.005 + i * 0.0075), 120, project));
+    ctx.strokeStyle = `rgba(74,56,32,${0.16 - i * 0.012})`;
+    ctx.lineWidth = 0.7;
+    ctx.stroke();
+  }
+
+  // The tick ring is interrupted at each slot bearing so its numeral has a clean
+  // cream gate to sit in — exactly how a printed compass card handles it.
+  const gateHalf = (step() * 180 / Math.PI) * 0.30;
+  for (let deg = 0; deg < 360; deg += 5) {
+    const a = deg * Math.PI / 180;
+    let inGate = false;
+    for (let i = 0; i < SLICES.length; i++) {
+      let d = Math.abs(deg - i * step() * 180 / Math.PI) % 360;
+      d = Math.min(d, 360 - d);
+      if (d < gateHalf) { inGate = true; break; }
+    }
+    if (inGate) continue;
+    const long = deg % 15 === 0;
+    const r0 = R * (long ? P.scaleIn + 0.008 : P.scaleIn + 0.032);
+    const r1 = R * P.scaleOut;
+    traceLine([
+      project(r0 * Math.sin(a), -r0 * Math.cos(a), z),
+      project(r1 * Math.sin(a), -r1 * Math.cos(a), z)
+    ]);
+    ctx.strokeStyle = long ? 'rgba(58,44,26,.55)' : 'rgba(58,44,26,.26)';
+    ctx.lineWidth = long ? 1.05 : 0.7;
+    ctx.stroke();
+  }
+
+  for (let i = 0; i < SLICES.length; i++) {
+    const a = i * step() - step() / 2;
+    [[1.7, 'rgba(252,244,222,.40)', 1.25], [0, 'rgba(52,38,22,.40)', 1.1]].forEach(([yOff, col, w]) => {
+      traceLine([
+        project(R * (P.hub + 0.02) * Math.sin(a), -R * (P.hub + 0.02) * Math.cos(a) + yOff, z),
+        project(R * P.sectorOut * Math.sin(a), -R * P.sectorOut * Math.cos(a) + yOff, z)
+      ]);
+      ctx.strokeStyle = col;
+      ctx.lineWidth = w;
+      ctx.stroke();
+    });
+  }
+
+  // Slot numerals: large, dark, in their gates. These are the loudest ink on the
+  // card because they are the keyboard target.
+  for (let i = 0; i < SLICES.length; i++) {
+    const a = i * step();
+    const h = Math.max(0, Math.min(1, S.hover[i].value));
+    const anchor = project(R * P.numeralR * Math.sin(a), -R * P.numeralR * Math.cos(a), z);
+    text(String(i + 1), anchor, {
+      size: 13,
+      font: SERIF,
+      weight: '600',
+      color: h > 0.3 ? C.vermilion : 'rgba(40,28,14,.94)'
+    });
+  }
+
+  // Quadrant pips between the sectors, printed on the card.
+  [45, 135, 225, 315].forEach(deg => {
+    const a = deg * Math.PI / 180;
+    const anchor = project(R * 0.955 * Math.sin(a), -R * 0.955 * Math.cos(a), z);
+    text('·', anchor, { size: 10, font: SERIF, color: 'rgba(58,44,26,.50)' });
+  });
+}
+
+function drawSectorWash() {
+  for (let i = 0; i < SLICES.length; i++) {
+    const h = Math.max(0, Math.min(1, S.hover[i].value));
+    if (h < 0.008) continue;
+    const pts = sectorPts(i, step() * 0.045, R * P.sectorIn, R * P.sectorOut, project);
+    tracePath(pts);
+    const g = ctx.createRadialGradient(0, 0, R * P.sectorIn, 0, 0, R * P.sectorOut);
+    g.addColorStop(0, `rgba(206,164,86,${0.30 * h})`);
+    g.addColorStop(0.62, `rgba(216,180,108,${0.24 * h})`);
+    g.addColorStop(1, `rgba(230,200,140,${0.10 * h})`);
+    ctx.fillStyle = g;
+    ctx.fill();
+  }
+}
+
+// Point inside the painted part of a wedge? Same test as RadialLayout.sliceContains.
+function sliceContains(px, py, index, inset) {
+  const r = Math.hypot(px, py);
+  if (r < R * P.sectorIn + inset || r > R * P.sectorOut - inset) return false;
+  const a = norm(Math.atan2(px, -py));
+  const c = norm(index * step());
+  let d = Math.abs(a - c);
+  d = Math.min(d, TAU - d);
+  return d <= Math.max(0, step() / 2 - inset / Math.max(r, 1));
+}
+
+// Widest horizontal box of `height` that still lies inside the wedge, bisected
+// against the wedge itself. Labels at 3 o'clock have plenty of chord but the
+// box corners leave the sectors long before the chord runs out.
+function labelWidthLimit(index, radius, height, pad) {
+  const c = index * step();
+  const ax = radius * Math.sin(c), ay = -radius * Math.cos(c);
+  const hh = height / 2;
+  const fits = w => {
+    const hw = w / 2;
+    for (const dx of [-hw, hw]) {
+      for (const dy of [-hh, hh]) {
+        if (!sliceContains(ax + dx, ay + dy, index, pad)) return false;
+      }
+    }
+    return true;
+  };
+  let lo = 0;
+  let hi = Math.min(2 * radius * Math.sin(Math.min(step(), Math.PI) / 2), 260);
+  if (fits(hi)) return hi;
+  for (let k = 0; k < 18; k++) {
+    const mid = (lo + hi) / 2;
+    if (fits(mid)) lo = mid; else hi = mid;
+  }
+  return lo;
+}
+
+function drawLabels() {
+  const z = R * P.top;
+  for (let i = 0; i < SLICES.length; i++) {
+    const h = Math.max(0, Math.min(1, S.hover[i].value));
+    const a = i * step();
+    const rr = R * P.labelR;
+    const anchor = project(rr * Math.sin(a), -rr * Math.cos(a), z);
+    const boxH = 24;
+    const maxW = Math.max(34, Math.min(labelWidthLimit(i, rr, boxH, 7), R * 0.60));
+
+    let size = 13;
+    ctx.save();
+    ctx.font = `600 ${size}px ${SERIF}`;
+    while (size > 7.5 && ctx.measureText(SLICES[i].title).width > maxW) {
+      size -= 0.5;
+      ctx.font = `600 ${size}px ${SERIF}`;
+    }
+    ctx.restore();
+
+    text(SLICES[i].title, { x: anchor.x, y: anchor.y - 5 * anchor.s, s: anchor.s }, {
+      size, font: SERIF, weight: '600', color: `rgba(47,35,21,${0.84 + 0.16 * h})`
+    });
+    if (maxW >= 44) {
+      text(SLICES[i].sub, { x: anchor.x, y: anchor.y + 9 * anchor.s, s: anchor.s }, {
+        size: 7.4, font: MONO, color: `rgba(93,74,52,${0.58 + 0.32 * h})`
+      });
+    }
+  }
+}
+
+function drawNeedle() {
+  const a = S.needle.value;
+  const z = R * (P.top + 0.004);
+  const len = R * 0.78, tail = R * 0.62, w = R * 0.026;
+
+  const tip  = project(len * Math.sin(a), -len * Math.cos(a), z);
+  const back = project(-tail * Math.sin(a), tail * Math.cos(a), z);
+  const l    = project(-w * Math.cos(a), -w * Math.sin(a), z);
+  const r    = project(w * Math.cos(a), w * Math.sin(a), z);
+
+  ctx.save();
+  ctx.translate(1.1, 1.5);
+  tracePath([tip, l, back, r]);
+  ctx.fillStyle = 'rgba(40,26,12,.30)';
+  ctx.fill();
+  ctx.restore();
+
+  tracePath([tip, l, back, r]);
+  const g = ctx.createLinearGradient(l.x, l.y, r.x, r.y);
+  g.addColorStop(0, '#7e2a1f');
+  g.addColorStop(0.5, C.vermilion);
+  g.addColorStop(1, '#6c2318');
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(52,18,12,.55)';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+}
+
+function drawHub() {
+  const r = R * P.hub;
+  const h = Math.max(0, Math.min(1, S.hub.value));
+
+  tracePath(ringPts(r, 80, project));
+  const g = ctx.createRadialGradient(-r * 0.34, -r * 0.42, r * 0.05, 0, 0, r * 1.10);
+  g.addColorStop(0, C.brassLit);
+  g.addColorStop(0.34, C.brassMid);
+  g.addColorStop(0.72, C.brassDark);
+  g.addColorStop(1, C.brassDeep);
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(38,26,12,.55)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  const win = r * 0.56;
+  tracePath(ringPts(win, 60, project));
+  ctx.fillStyle = 'rgba(38,27,14,.92)';
+  ctx.fill();
+  tracePath(ringPts(win, 60, project));
+  ctx.strokeStyle = `rgba(250,238,208,${0.10 + 0.20 * h})`;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  text(hoveredSlice === null ? '–' : '0' + (hoveredSlice + 1), { x: 0, y: 1, s: 1 }, {
+    size: r * 0.58, font: MONO, weight: '600', color: C.brassHi
+  });
+
+  ctx.beginPath();
+  ctx.arc(0, 0, R * 0.018, 0, TAU);
+  ctx.fillStyle = 'rgba(250,240,214,.55)';
+  ctx.fill();
+}
+
+// ── Compose ────────────────────────────────────────────────────────────────
+function draw() {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(O.x, O.y);
+
+  drawBackdrop();
+
+  const open = Math.max(0, Math.min(1, S.open.value));
+  if (open < 0.002) { ctx.restore(); return; }
+
+  ctx.scale(0.94 + 0.06 * open, 0.94 + 0.06 * open);
+
+  drawContactShadow();
+  drawLidShadow();
+  drawLid();
+  drawCaseWall();
+  drawLug();
+  drawBrass();
+  drawHinge();
+  drawCard();
+  drawCardPrinting();
+  drawSectorWash();
+  drawNeedle();
+  drawLabels();
+  drawHub();
+
+  ctx.restore();
+}
+
+function aim() {
+  const dx = pointer.x - O.x, dy = pointer.y - O.y;
+  const d = Math.hypot(dx, dy);
+  const reach = R * 1.05;
+  if (d < 1) { S.pitch.target = 0; S.roll.target = 0; return; }
+  const t = Math.min(1, d / reach);
+  const strength = (11 * Math.PI / 180) * (t * t * (3 - 2 * t));
+  S.pitch.target = strength * (dy / d);
+  S.roll.target = -strength * (dx / d);
+}
+
+function hitTest() {
+  const dx = pointer.x - O.x, dy = pointer.y - O.y;
+  const d = Math.hypot(dx, dy);
+  if (d <= R * P.hub) return -2;
+  if (d > R * P.sectorOut) return -1;
+  return Math.round(norm(Math.atan2(dx, -dy)) / step()) % SLICES.length;
+}
+
+function resize() {
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = Math.round(W * DPR);
+  canvas.height = Math.round(H * DPR);
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  R = RADIUS_OVERRIDE || Math.min(190, Math.min(W, H) * 0.155);
+  O = { x: W / 2, y: H / 2 + R * 0.42 };
+  if (!grain) buildGrain();
+}
+
+let last = performance.now();
+let started = false;
+
+function frame(now) {
+  const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+  last = now;
+
+  if (!started) {
+    started = true;
+    S.open.value = 0.30; S.open.target = 1;
+    S.needle.value = 0;
+    if (FREEZE === null) { S.lid.value = 0; S.lid.target = 1; }
+    else { S.lid.value = 1; S.lid.target = 1; }
+  }
+
+  aim();
+  [S.open, S.lid, S.pitch, S.roll, S.needle, S.hub].forEach(s => s.step(dt));
+  S.hover.forEach(s => s.step(dt));
+
+  lidAngle = FREEZE !== null
+    ? FREEZE * Math.PI / 180
+    : S.lid.value * P.lidOpen * Math.PI / 180;
+
+  const hit = hitTest();
+  hoveredSlice = hit >= 0 ? hit : null;
+  S.hover.forEach((s, i) => { s.target = i === hoveredSlice ? 1 : 0; });
+  S.hub.target = hit === -2 ? 1 : 0;
+  if (hoveredSlice !== null) S.needle.target = hoveredSlice * step();
+
+  draw();
+  requestAnimationFrame(frame);
+}
+
+window.addEventListener('resize', resize);
+window.addEventListener('pointermove', e => { pointer = { x: e.clientX, y: e.clientY }; });
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { S.open.target = 0; S.lid.target = 0; }
+  if (/^[1-9]$/.test(e.key)) S.needle.target = (parseInt(e.key, 10) - 1) * step();
+});
+
+resize();
+pointer = { x: W / 2 + R * 0.55, y: H / 2 - R * 0.10 };
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

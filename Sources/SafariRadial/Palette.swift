@@ -3,66 +3,71 @@ import SwiftUI
 
 /// The app's design language.
 ///
-/// One idea drives it: this is a **dial**, not a list of links. So the palette is
-/// instrument-like — deep petrol glass, warm bone lettering, and a single hot orange used
-/// only for the thing you are aiming at. Orange is the only saturated colour in the product;
-/// every other surface is a shade of the same cold green-black, which is what makes the
-/// signal read.
+/// One idea drives it: this is a **brass pocket compass**, not a list of links. The surfaces
+/// are the desk it lies on — warm brown-black leather and oak — the ink is aged parchment,
+/// and there is one saturated colour, the vermilion needle, used only for the thing you are
+/// aiming at. That is the whole palette; every other value is a shade of the desk.
+///
+/// The change from cold petrol is deliberate and total: a brass instrument sitting in a
+/// green-glass window reads as two products. Every token here is a warm value measured
+/// against the surfaces it is actually used on, using composited alpha rather than the raw
+/// colour — `bone.opacity(0.56)` is not 0.56 of the way to black, and assuming so is how
+/// secondary text ends up under the floor.
 enum Palette {
 
     // MARK: - Surfaces
 
-    /// Window background. Slightly green-black, never neutral grey.
-    static let void = Color(red: 0.024, green: 0.078, blue: 0.090)
-    static let voidRaised = Color(red: 0.039, green: 0.114, blue: 0.129)
-    /// Panels, fields, rows.
-    static let hull = Color(red: 0.043, green: 0.129, blue: 0.149)
-    static let hullLift = Color(red: 0.063, green: 0.180, blue: 0.200)
+    /// Window background: the leather the compass sits on. Warm, never neutral grey.
+    static let void = Color(red: 0.102, green: 0.078, blue: 0.063)
+    static let voidRaised = Color(red: 0.141, green: 0.110, blue: 0.086)
+    /// Panels, fields, rows: oak.
+    static let hull = Color(red: 0.165, green: 0.129, blue: 0.102)
+    static let hullLift = Color(red: 0.208, green: 0.165, blue: 0.129)
     /// Title bar gradient ends.
-    static let chromeTop = Color(red: 0.047, green: 0.141, blue: 0.161)
-    static let chromeBottom = Color(red: 0.035, green: 0.114, blue: 0.129)
+    static let chromeTop = Color(red: 0.165, green: 0.129, blue: 0.102)
+    static let chromeBottom = Color(red: 0.122, green: 0.094, blue: 0.075)
 
     // MARK: - Lines
 
-    static let rim = Color(red: 0.949, green: 0.918, blue: 0.863).opacity(0.09)
-    static let rimStrong = Color(red: 0.949, green: 0.918, blue: 0.863).opacity(0.22)
+    static let rim = Color(red: 0.941, green: 0.898, blue: 0.804).opacity(0.10)
+    static let rimStrong = Color(red: 0.941, green: 0.898, blue: 0.804).opacity(0.24)
 
     // MARK: - Ink
 
-    /// Warm bone rather than pure white: white on green-black looks dead and blue-shifted.
+    /// Aged parchment rather than pure white: white on a warm desk looks dead.
     ///
-    /// The opacity ladder is set by measured contrast against the darkest surfaces in the
-    /// app, not by eye. On `void`/`hull` a 0.30 alpha lands at 2.4:1 and 0.42 at 3.5:1 —
-    /// both under the 4.5:1 floor for body text, which is exactly why the first build's
-    /// secondary text read as smudges on a dim display or at an angle.
-    static let bone = Color(red: 0.949, green: 0.918, blue: 0.863)
-    /// Secondary text: subtitles, host names, help lines. 5.2:1 on `hull`.
-    static let boneDim = bone.opacity(0.68)
-    /// Tertiary: column headers, decorative counts.
-    ///
-    /// 0.50 measured 4.4:1 on the bezel band, under the 4.5:1 floor — the same "can't read
-    /// the grey" complaint one step further down the ladder. 0.56 clears 5.2:1 everywhere the
-    /// token is used and still sits a full step below `boneDim`.
+    /// The opacity ladder is measured on the composited colour against `hull`/`lift`, the
+    /// lightest surfaces it is drawn on. 0.62 lands at 5.8:1 on hull and 5.3:1 on lift; 0.56
+    /// still clears 4.5:1 on every surface in the app, which is the floor for body text.
+    static let bone = Color(red: 0.941, green: 0.898, blue: 0.804)
+    /// Secondary text: subtitles, host names, help lines. 5.8:1 on `hull`.
+    static let boneDim = bone.opacity(0.62)
+    /// Tertiary: column headers, decorative counts. 4.95:1 on `hull`.
     static let boneFaint = bone.opacity(0.56)
-    /// Placeholder text. Matched to `boneDim` rather than dimmer: a placeholder is the only
-    /// label some fields have, so it is the one grey string that must never be guessed at.
+    /// Placeholder text. A placeholder is the only label some fields have, so it is the one
+    /// string that must never be guessed at.
     static let hint = bone.opacity(0.62)
 
     // MARK: - Signal
 
-    /// The one differentiating colour. Hover, aim, primary action.
-    static let signal = Color(red: 1.0, green: 0.420, blue: 0.173)
-    static let signalInk = Color(red: 0.125, green: 0.051, blue: 0.016)
-    /// Confirmed / success. Deliberately close to the teal base, not a second accent.
-    static let mint = Color(red: 0.435, green: 0.847, blue: 0.745)
-    static let alarm = Color(red: 1.0, green: 0.361, blue: 0.478)
+    /// The one differentiating colour: the needle's vermilion. Hover, aim, primary action.
+    ///
+    /// The old orange was 2.3:1 when drawn on its own hovered fill, which made the aimed
+    /// label the least readable thing on screen. This clears 5.2:1 on `hull` and 4.6:1 on
+    /// `hullLift`, so it may be used for text as well as for a fill.
+    static let signal = Color(red: 0.851, green: 0.482, blue: 0.275)
+    static let signalInk = Color(red: 0.125, green: 0.098, blue: 0.070)
+    /// Confirmed / success: the patina's green, not a second accent.
+    static let mint = Color(red: 0.561, green: 0.749, blue: 0.639)
+    static let alarm = Color(red: 0.878, green: 0.506, blue: 0.478)
 
     // MARK: - Type
 
-    /// Avenir Next ships on every Mac and is not the default UI face, which is exactly why
-    /// the product does not look like a stock window. SF Pro is the fallback.
+    /// Baskerville: the serif the reference card is lettered in, and a face that ships on
+    /// every Mac. Palatino is the fallback. A serif is the whole difference between "printed
+    /// instrument" and "app chrome".
     static func display(_ size: CGFloat, _ weight: Font.Weight = .semibold) -> Font {
-        .custom("Avenir Next", size: size).weight(weight)
+        .custom("Baskerville", size: size).weight(weight)
     }
 
     /// Everything numeric or technical: slot numbers, keycaps, URLs, counts.
@@ -74,10 +79,10 @@ enum Palette {
     static func nsDisplay(_ size: CGFloat, _ weight: NSFont.Weight = .semibold) -> NSFont {
         let name: String
         switch weight {
-        case .regular, .light, .thin, .ultraLight: name = "AvenirNext-Regular"
-        case .medium: name = "AvenirNext-Medium"
-        case .bold, .heavy, .black: name = "AvenirNext-Bold"
-        default: name = "AvenirNext-DemiBold"
+        case .regular, .light, .thin, .ultraLight: name = "Baskerville"
+        case .medium, .semibold: name = "Baskerville-SemiBold"
+        case .bold, .heavy, .black: name = "Baskerville-Bold"
+        default: name = "Baskerville"
         }
         return NSFont(name: name, size: size) ?? NSFont.systemFont(ofSize: size, weight: weight)
     }
@@ -87,8 +92,8 @@ enum Palette {
     }
 
     // AppKit colour for the radial renderer and the recorder.
-    static let nsSignal = NSColor(calibratedRed: 1.0, green: 0.420, blue: 0.173, alpha: 1)
-    static let nsVoid = NSColor(calibratedRed: 0.024, green: 0.078, blue: 0.090, alpha: 1)
+    static let nsSignal = NSColor(calibratedRed: 0.851, green: 0.482, blue: 0.275, alpha: 1)
+    static let nsVoid = NSColor(calibratedRed: 0.102, green: 0.078, blue: 0.063, alpha: 1)
 }
 
 /// SwiftUI's default placeholder resolves to a near-black secondary colour over this

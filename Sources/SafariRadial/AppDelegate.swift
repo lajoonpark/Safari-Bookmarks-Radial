@@ -587,44 +587,62 @@ extension AppDelegate: NSWindowDelegate {
     }
 }
 
-/// The menu bar mark: nine wedges around a hub, drawn rather than drawn from an SF Symbol so
-/// it matches the product. Rendered as a template image, so macOS tints it for light/dark.
+/// The menu bar mark: a compass, seen from above.
+///
+/// Drawn rather than borrowed from an SF Symbol, so it matches the product. Rendered as a
+/// template image, so macOS tints it for light and dark menu bars — which means it has to say
+/// "compass" in one colour and about twelve pixels: a case, a card, eight bearings, and a
+/// needle. Everything else would turn to mush at that size.
 enum StatusIcon {
     static func make(size: CGFloat = 18) -> NSImage {
         let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
             guard let context = NSGraphicsContext.current?.cgContext else { return false }
             let centre = CGPoint(x: rect.midX, y: rect.midY)
-            let layout = RadialLayout(
-                sliceCount: RadialLayout.maxSlicesPerPage,
-                centerRadius: rect.width * 0.14,
-                outerRadius: rect.width * 0.47
-            )
+            let outer = rect.width * 0.47
+            let inner = rect.width * 0.35
+            let hub = rect.width * 0.085
+
             context.saveGState()
             context.translateBy(x: centre.x, y: centre.y)
             context.scaleBy(x: 1, y: -1)
             context.setFillColor(NSColor.black.cgColor)
 
-            for index in 0..<RadialLayout.maxSlicesPerPage {
-                let drawn = layout.drawableRange(of: index, inset: 0.14)
-                let path = CGMutablePath()
-                let segments = 6
-                path.move(to: layout.point(radius: layout.outerRadius, angle: drawn.start))
-                for step in 1...segments {
-                    let t = CGFloat(step) / CGFloat(segments)
-                    path.addLine(to: layout.point(radius: layout.outerRadius, angle: drawn.start + drawn.sweep * t))
-                }
-                for step in stride(from: segments, through: 0, by: -1) {
-                    let t = CGFloat(step) / CGFloat(segments)
-                    path.addLine(to: layout.point(radius: layout.innerRadius, angle: drawn.start + drawn.sweep * t))
-                }
-                path.closeSubpath()
-                context.addPath(path)
-                context.fillPath()
+            // Case ring, as an annulus so the card shows through.
+            let ring = CGMutablePath()
+            ring.addEllipse(in: CGRect(x: -outer, y: -outer, width: outer * 2, height: outer * 2))
+            ring.addEllipse(in: CGRect(x: -inner, y: -inner, width: inner * 2, height: inner * 2))
+            context.addPath(ring)
+            context.fillPath(using: .evenOdd)
+
+            // Bearings: eight ticks on the card's rim, the compass's readable signature.
+            context.setStrokeColor(NSColor.black.cgColor)
+            context.setLineWidth(max(1, rect.width * 0.05))
+            for index in 0..<8 {
+                let angle = CGFloat(index) / 8 * 2 * .pi
+                context.move(to: CGPoint(
+                    x: (inner + rect.width * 0.03) * sin(angle),
+                    y: -(inner + rect.width * 0.03) * cos(angle)
+                ))
+                context.addLine(to: CGPoint(
+                    x: (outer - rect.width * 0.03) * sin(angle),
+                    y: -(outer - rect.width * 0.03) * cos(angle)
+                ))
             }
-            context.fillEllipse(in: CGRect(
-                x: -layout.centerRadius, y: -layout.centerRadius,
-                width: layout.centerRadius * 2, height: layout.centerRadius * 2
-            ))
+            context.strokePath()
+
+            // Needle pointing north, and the hub pin.
+            let tip = CGPoint(x: 0, y: -(outer - rect.width * 0.055))
+            let left = CGPoint(x: -rect.width * 0.055, y: rect.width * 0.10)
+            let right = CGPoint(x: rect.width * 0.055, y: rect.width * 0.10)
+            let needle = CGMutablePath()
+            needle.move(to: tip)
+            needle.addLine(to: left)
+            needle.addLine(to: right)
+            needle.closeSubpath()
+            context.addPath(needle)
+            context.fillPath()
+
+            context.fillEllipse(in: CGRect(x: -hub, y: -hub, width: hub * 2, height: hub * 2))
             context.restoreGState()
             return true
         }
