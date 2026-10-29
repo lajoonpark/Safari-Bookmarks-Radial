@@ -276,13 +276,13 @@ private struct WelcomeMark: View {
                 }
 
                 // Lid, standing open behind the case.
-                context.fill(ringPath(metrics.caseRadius, lid: lid), with: .color(CompassTheme.brassMid))
+                context.fill(ringPath(metrics.caseRadius, lid: lid), with: .color(CompassTheme.brassMid.swiftUI()))
                 context.stroke(ringPath(metrics.caseRadius, lid: lid),
-                               with: .color(CompassTheme.brassDeep.opacity(0.55)), lineWidth: 1)
+                               with: .color(CompassTheme.brassDeep.swiftUI(alpha: 0.55)), lineWidth: 1)
 
                 // Case and card.
-                context.fill(ringPath(metrics.caseRadius), with: .color(CompassTheme.brassLit))
-                context.fill(ringPath(metrics.cardRadius), with: .color(CompassTheme.paper))
+                context.fill(ringPath(metrics.caseRadius), with: .color(CompassTheme.brassLit.swiftUI()))
+                context.fill(ringPath(metrics.cardRadius), with: .color(CompassTheme.paper.swiftUI()))
 
                 // A few printed degrees, so it reads as a card rather than a disc.
                 for degrees in stride(from: 0, to: 360, by: 15) {
@@ -290,7 +290,7 @@ private struct WelcomeMark: View {
                     var tick = Path()
                     tick.move(to: screen(Point3D(radius: metrics.scaleInset * 1.02, angle: angle)))
                     tick.addLine(to: screen(Point3D(radius: metrics.scaleOutset, angle: angle)))
-                    context.stroke(tick, with: .color(CompassTheme.inkRule.opacity(0.45)), lineWidth: 0.9)
+                    context.stroke(tick, with: .color(CompassTheme.inkRule.swiftUI(alpha: 0.45)), lineWidth: 0.9)
                 }
 
                 // Sectors, with one aimed at.
@@ -315,9 +315,9 @@ private struct WelcomeMark: View {
                     wedge.closeSubpath()
                     let lit = index == 1
                     if lit {
-                        context.fill(wedge, with: .color(CompassTheme.vermilion.opacity(0.16)))
+                        context.fill(wedge, with: .color(CompassTheme.vermilion.swiftUI(alpha: 0.16)))
                     }
-                    context.stroke(wedge, with: .color(CompassTheme.inkRule.opacity(0.35)), lineWidth: 0.9)
+                    context.stroke(wedge, with: .color(CompassTheme.inkRule.swiftUI(alpha: 0.35)), lineWidth: 0.9)
                 }
 
                 // Needle, on the aimed slot.
@@ -327,10 +327,10 @@ private struct WelcomeMark: View {
                 needle.addLine(to: screen(Point3D(radius: -metrics.cardRadius * 0.56, angle: bearing + .pi / 2)))
                 needle.addLine(to: screen(Point3D(radius: -metrics.cardRadius * 0.56, angle: bearing - .pi / 2)))
                 needle.closeSubpath()
-                context.fill(needle, with: .color(CompassTheme.vermilion))
+                context.fill(needle, with: .color(CompassTheme.vermilion.swiftUI()))
 
                 // Hub.
-                context.fill(ringPath(metrics.hubRadius), with: .color(CompassTheme.brassDark))
+                context.fill(ringPath(metrics.hubRadius), with: .color(CompassTheme.brassDark.swiftUI()))
                 context.fill(
                     Path(ellipseIn: CGRect(
                         x: centre.x - metrics.cardRadius * 0.028,
@@ -338,7 +338,7 @@ private struct WelcomeMark: View {
                         width: metrics.cardRadius * 0.056,
                         height: metrics.cardRadius * 0.056
                     )),
-                    with: .color(CompassTheme.hubWindowInk)
+                    with: .color(CompassTheme.hubWindowInk.swiftUI())
                 )
             }
             .frame(width: side, height: side)

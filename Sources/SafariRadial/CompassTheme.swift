@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// The compass's materials.
 ///
@@ -101,4 +102,19 @@ enum CompassTheme {
     /// Half-width of the clear gate cut through the tick ring for each slate numeral, as a
     /// fraction of one slice's arc. Real compass cards interrupt the scale the same way.
     static let numeralGateHalf: CGFloat = 0.30
+}
+
+/// The same materials, for SwiftUI.
+///
+/// `CompassTheme` is an `NSColor` palette because the instrument is drawn on an `NSView` canvas.
+/// The manager's mini dial and the welcome art are SwiftUI `Canvas`es, whose `GraphicsContext`
+/// refuses anything but `Color`, and there is no implicit conversion between the two on Darwin.
+///
+/// Alpha is a parameter rather than `.opacity(…)` on purpose: `opacity(_:)` is SwiftUI's, so
+/// `NSColor.opacity(0.3)` does not compile — the shade has to be applied with
+/// `withAlphaComponent` before the colour crosses over.
+extension NSColor {
+    func swiftUI(alpha: CGFloat = 1) -> Color {
+        Color(nsColor: alpha >= 1 ? self : withAlphaComponent(alpha))
+    }
 }

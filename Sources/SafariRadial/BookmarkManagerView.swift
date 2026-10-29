@@ -545,7 +545,7 @@ struct MiniDial: View {
                         width: metrics.caseRadius * 2,
                         height: metrics.caseRadius * 2
                     )),
-                    with: .color(CompassTheme.brassMid)
+                    with: .color(CompassTheme.brassMid.swiftUI())
                 )
                 // Card.
                 context.fill(
@@ -555,7 +555,7 @@ struct MiniDial: View {
                         width: metrics.cardRadius * 2,
                         height: metrics.cardRadius * 2
                     )),
-                    with: .color(CompassTheme.paper)
+                    with: .color(CompassTheme.paper.swiftUI())
                 )
 
                 // Wedges, with the first lit when the dial has contents.
@@ -577,11 +577,11 @@ struct MiniDial: View {
                     }
                     path.closeSubpath()
                     context.fill(path, with: .color(lit
-                        ? CompassTheme.vermilion.opacity(0.30)
-                        : CompassTheme.ink.opacity(0.06)))
+                        ? CompassTheme.vermilion.swiftUI(alpha: 0.30)
+                        : CompassTheme.ink.swiftUI(alpha: 0.06)))
                     context.stroke(path, with: .color(lit
-                        ? CompassTheme.vermilion.opacity(0.90)
-                        : CompassTheme.ink.opacity(0.20)), lineWidth: 0.8)
+                        ? CompassTheme.vermilion.swiftUI(alpha: 0.90)
+                        : CompassTheme.ink.swiftUI(alpha: 0.20)), lineWidth: 0.8)
                 }
 
                 // Needle, pointing at the first slot.
@@ -591,7 +591,7 @@ struct MiniDial: View {
                 needle.addLine(to: CGPoint(x: centre.x - side * 0.030, y: centre.y + metrics.cardRadius * 0.42))
                 needle.addLine(to: CGPoint(x: centre.x + side * 0.030, y: centre.y + metrics.cardRadius * 0.42))
                 needle.closeSubpath()
-                context.fill(needle, with: .color(CompassTheme.vermilion.opacity(filled ? 1 : 0.30)))
+                context.fill(needle, with: .color(CompassTheme.vermilion.swiftUI().opacity(filled ? 1 : 0.30)))
 
                 // Hub.
                 context.fill(
@@ -601,7 +601,7 @@ struct MiniDial: View {
                         width: metrics.hubRadius * 2,
                         height: metrics.hubRadius * 2
                     )),
-                    with: .color(CompassTheme.brassDark)
+                    with: .color(CompassTheme.brassDark.swiftUI())
                 )
             }
             .frame(width: side, height: side)
