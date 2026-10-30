@@ -1,4 +1,5 @@
 import Foundation
+import QuartzCore
 
 /// A critically damped spring, integrated per frame.
 ///
@@ -27,8 +28,12 @@ struct SpringValue {
     /// Advances by `dt` seconds and returns the new value.
     @discardableResult
     mutating func step(_ dt: Double) -> Double {
-        // Sub-step so a hitchy frame cannot make the spring explode.
-        let clamped = min(dt, 1.0 / 30.0)
+        // Sub-step so a hitchy frame cannot make the spring explode. The cap only exists to
+        // bound the work per frame, so it has to sit far above any dt the driver can hand us:
+        // capping at a nominal 1/30 was silently undoing `FrameDriver`'s real-time measurement
+        // by compressing a 250ms stall into 33ms of motion. Every spring in this file is stable
+        // at 0.25s with 240Hz sub-steps, which is the driver's own ceiling.
+        let clamped = min(dt, FrameDriver.maximumStep)
         let steps = max(1, Int((clamped / (1.0 / 240.0)).rounded(.up)))
         let h = clamped / Double(steps)
         for _ in 0..<steps {
@@ -41,6 +46,12 @@ struct SpringValue {
             velocity = 0
         }
         return value
+    }
+
+    /// Starts the spring already moving. Used where an object must be under way on the very
+    /// first frame rather than easing away from rest, which reads as a stutter.
+    mutating func kick(velocity newVelocity: Double) {
+        velocity = newVelocity
     }
 
     mutating func snap(to newValue: Double) {
@@ -83,6 +94,10 @@ enum Easing {
 /// Drives per-frame redraws while anything is moving. Deliberately idle when the menu is
 /// closed so the app costs nothing in the background.
 final class FrameDriver {
+    /// Longest single step the springs are ever asked to take. Also the value `Timer` is
+    /// clamped to, so the two cannot drift apart.
+    static let maximumStep: Double = 0.25
+
     private var timer: Timer?
     private var tick: ((Double) -> Void)?
 
@@ -91,9 +106,19 @@ final class FrameDriver {
     func start(_ onTick: @escaping (Double) -> Void) {
         tick = onTick
         guard timer == nil else { return }
+        var last = CACurrentMediaTime()
         let timer = Timer(timeInterval: 1.0 / 120.0, repeats: true) { [weak self] _ in
             guard let self, let tick = self.tick else { return }
-            tick(1.0 / 120.0)
+            // Real elapsed time, not the nominal interval. Summoning the menu activates the
+            // app and orders the panel front, and the main run loop can be held off for a few
+            // hundred milliseconds while that happens. Feeding the nominal 1/120 in afterwards
+            // makes the springs re-live the stall frame by frame: the compass appears, the
+            // motion stops, and only then does the lid swing. Measuring the clock instead lets
+            // the animation resume exactly where wall-clock time says it should be.
+            let now = CACurrentMediaTime()
+            let dt = min(FrameDriver.maximumStep, max(0, now - last))
+            last = now
+            tick(dt)
         }
         // .common keeps animation alive while a menu or resize is tracking.
         RunLoop.main.add(timer, forMode: .common)

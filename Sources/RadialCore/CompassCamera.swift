@@ -84,10 +84,14 @@ public struct CompassCamera: Equatable, Sendable {
 
 /// The lid, on its hinge.
 ///
-/// Modelled as the same disc as the case, pivoting on a line across its top rim. That equality
-/// is not cosmetic: if the lid were any smaller than the case, the points on the hinge line
-/// would move as it opened and the lid would visibly detach and float. With the hinge exactly
-/// on the disc's own edge, `hingeY` is a fixed point of the rotation for every angle.
+/// Modelled as a disc pivoting on a line across its own top edge. Keeping the hinge tangent to
+/// the lid's rim is not cosmetic: if the pivot were anywhere but on the disc's edge, points on
+/// the hinge line would move as the lid opened and it would visibly detach and float. With the
+/// hinge exactly on the rim, `hingeY` is a fixed point of the rotation at every angle.
+///
+/// The disc is slightly smaller than the case (`CompassMetrics.lidRadius`) because a real lid
+/// closes inside the case's lip. That is why the hinge sits at `-lidRadius` and not at the
+/// case's rim: the pivot follows the lid, not the box it closes into.
 public struct CompassLid: Equatable, Sendable {
     public let metrics: CompassMetrics
     /// 0 = shut, 1 = fully open.
@@ -100,8 +104,14 @@ public struct CompassLid: Equatable, Sendable {
 
     public var angle: CGFloat { openness * CompassMetrics.lidOpenAngle }
 
-    /// The hinge line: the top rim of the case, on the card's plane.
-    public var hingeY: CGFloat { -metrics.caseRadius }
+    /// The hinge line: the lid's own rim, on the card's plane.
+    ///
+    /// Exactly on the rim, so the lid cannot detach as it swings. A short strap was tried here
+    /// to lift the plate clear of the top numerals, and it is no longer needed: at
+    /// `lidRadius = 0.87 × caseRadius` the rim is already outside the card's edge, so the shut
+    /// lid covers the dial and the open one clears it. Raising the pivot on top of that would
+    /// pull the lid's near edge up off the case it is supposed to rest on.
+    public var hingeY: CGFloat { -metrics.lidRadius }
     public var hingeZ: CGFloat { -metrics.cardDepth * 0.5 }
 
     /// Swings a point from the lid's shut pose into its current pose.
@@ -124,8 +134,8 @@ public struct CompassLid: Equatable, Sendable {
         camera.project(swing(point)).point
     }
 
-    /// Radius of the lid disc. Equal to the case, deliberately; see the type's note.
-    public var radius: CGFloat { metrics.caseRadius }
+    /// Radius of the lid disc, slightly inside the case's lip; see the type's note.
+    public var radius: CGFloat { metrics.lidRadius }
 
     /// A point on the lid, given polar coordinates in its own plane.
     public func point(radius: CGFloat, angle: CGFloat) -> Point3D {

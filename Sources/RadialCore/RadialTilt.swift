@@ -37,16 +37,24 @@ public struct RadialTilt: Equatable, Sendable {
 
     /// Largest tilt the menu allows.
     ///
-    /// Calibrated rather than guessed. At 6° with a 1400pt eye the near and far edges differ
-    /// by only 4% in size, which nobody can see — the dial just looked slightly off-centre.
-    /// 11° at 4× the radius gives roughly 10% asymmetry and a 2% squash: visible as a lean,
-    /// still obviously a ring. Past ~15° the far wedges start to foreshorten into slivers and
-    /// the slot numbers drift off their ticks.
-    public static let maxAngle: CGFloat = 11 * .pi / 180
+    /// Calibrated rather than guessed. The lean only reads if the near and far edges differ
+    /// enough in size to see; anything under ~7% asymmetry looks like an off-centre disc.
+    ///
+    /// This used to be 11° at a 4× eye, which put 10% asymmetry on the card — but the same
+    /// short eye magnified the *lid*, which stands a full diameter out of the card plane. Its
+    /// far edge sat at z ≈ 2.2 radii and projected at 2.2×, so the open lid was a huge,
+    /// featureless disc half hanging off the screen. Backing the eye off to 8× makes the case
+    /// lean read at a glance and the lid sit in proportion; the angle rises to compensate so
+    /// the dial's own lean is unchanged. Past ~20° the far wedges foreshorten into slivers.
+    public static let maxAngle: CGFloat = 17 * .pi / 180
 
     /// Eye distance as a multiple of the dial's radius. Fixed ratio, so the amount of
     /// perspective is the same at every menu size instead of growing with it.
-    public static let eyeDistanceRatio: CGFloat = 4
+    ///
+    /// The number is doing double duty: it sets how dramatic the lean is *and* how strongly
+    /// anything off the card's plane is magnified. The lid needs a long eye; the case's lean
+    /// needs a short one. 8× is the point where `maxAngle` can carry the lean on its own.
+    public static let eyeDistanceRatio: CGFloat = 8
 
     /// No tilt at all. Used as the resting state and as the identity case.
     public static let flat = RadialTilt()

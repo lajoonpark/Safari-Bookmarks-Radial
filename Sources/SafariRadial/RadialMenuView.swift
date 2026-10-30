@@ -29,10 +29,9 @@ final class RadialMenuView: NSView {
     // MARK: - Animation state
 
     private let driver = FrameDriver()
-    private var openProgress = SpringValue(0, stiffness: 300, damping: 24)
-    private var contentProgress = SpringValue(0, stiffness: 250, damping: 26)
+    private var openProgress = SpringValue(0, stiffness: 420, damping: 27)
     /// The compass sweep that plays once as the dial appears.
-    private var sweepProgress = SpringValue(0, stiffness: 260, damping: 34)
+    private var sweepProgress = SpringValue(0, stiffness: 300, damping: 34)
     private var sliceHover: [SpringValue] = []
     private var slicePress: [SpringValue] = []
     private var hubHover = SpringValue(0, stiffness: 380, damping: 28)
@@ -44,9 +43,22 @@ final class RadialMenuView: NSView {
     /// tracking the cursor rigidly.
     private var tiltPitch = SpringValue(0, stiffness: 170, damping: 26)
     private var tiltRoll = SpringValue(0, stiffness: 170, damping: 26)
-    /// How far the lid has swung. Its own spring, because a 90g brass lid does not move like a
-    /// cursor-following rotation: it has more mass and it settles.
-    private var lidOpen = SpringValue(0, stiffness: 210, damping: 27)
+    /// How far the lid has swung.
+    ///
+    /// Stiff enough that the lid is half open in ~38ms and settled in ~100ms: it has to read as
+    /// one flick of a sprung lid, not as an animation you watch. Still damped near critical, so
+    /// it lands with a small settle rather than a wobble.
+    ///
+    /// Much quicker than the original tuning (210/27), which took 108ms just to reach halfway
+    /// and 358ms to settle, while the case was done in ~110ms. That mismatch was the "appears,
+    /// then pauses, then flips" the opening used to have: by the time the box had landed, the
+    /// lid had barely moved. The kick in `present()` puts it under way on the very first frame,
+    /// so there is no dead time before anything is visible.
+    private var lidOpen = SpringValue(0, stiffness: 700, damping: 38)
+    /// Set once the sweep has been released, so the opening beat only ever plays one time.
+    private var sweepStarted = false
+    /// Fired when a closing motion actually finishes, instead of after a guessed delay.
+    private var closeCompletion: (() -> Void)?
 
     private let renderer = CompassRenderer()
 
@@ -154,30 +166,41 @@ final class RadialMenuView: NSView {
     func present() {
         isClosing = false
         openProgress.snap(to: 0)
-        contentProgress.snap(to: 0)
         sweepProgress.snap(to: 0)
         lidOpen.snap(to: 0)
+        sweepStarted = false
+        // Everything moves from this instant. There used to be a 0.28s timer here that held the
+        // print back until the lid had cleared; because the lid spring also started from rest,
+        // the visible result was the box appearing, pausing, and *then* opening. The card is
+        // now revealed by the lid's own angle (`printAlpha`), so the two cannot desynchronise
+        // and there is nothing to wait for.
         openProgress.target = 1
-        // The print and the sweep wait for the lid. Starting them together makes the card
-        // appear to glow through the closed lid, which breaks the object instantly.
-        contentProgress.target = 0
-        sweepProgress.target = 0
         lidOpen.target = 1
+        // Both springs are kicked rather than released from rest. A spring at rest spends its
+        // first frames accelerating from zero, and because the shut lid projects to very nearly
+        // nothing for the first ~40° of its swing, those frames look like the box appearing and
+        // then pausing before anything flips. Launching the lid already moving makes the box
+        // and the lid leave together, in one gesture.
+        openProgress.kick(velocity: 4.6)
+        lidOpen.kick(velocity: 14)
         needle.snap(to: Double(ringLayout.centerAngle(of: 0)))
-        revealContentWhenLidClears()
+        primeHoverFromPointer()
         beginAnimating()
     }
 
-    /// Holds the card's print back until the lid is far enough open to be seen past.
-    private func revealContentWhenLidClears() {
-        let expected = 0.28
-        DispatchQueue.main.asyncAfter(deadline: .now() + expected) { [weak self] in
-            guard let self, !self.isClosing else { return }
-            self.contentProgress.target = 1
-            self.sweepProgress.target = 1
-            self.primeHoverFromPointer()
-            self.beginAnimating()
-        }
+    /// How much of the card's print is visible.
+    ///
+    /// Derived from the lid angle rather than from a clock, so the print can never glow through
+    /// a shut lid or lag behind one that has already cleared.
+    ///
+    /// The window is wide on purpose. A narrow one (the first attempt spanned 0.18...0.52 of
+    /// the lid's travel) put the whole reveal inside ~35ms, which reads as a flicker rather
+    /// than a fade, because the lid's spring crosses that band almost instantly. Starting while
+    /// the lid still hides the card costs nothing — the lid is painted over everything until it
+    /// swings clear — and finishing near the lid's landing lets the print resolve with it.
+    private var printProgress: Double {
+        let reveal = (Double(lidOpen.value) - 0.12) / 0.74
+        return min(1, max(0, reveal))
     }
 
     /// The dial opens under the cursor, so whatever slice is there should already be lit
@@ -212,18 +235,17 @@ final class RadialMenuView: NSView {
         hoveredSlice = nil
         pressedSlice = nil
         pressedHub = false
+        closeCompletion = completion
         releasePressSprings()
         if animated {
             openProgress.target = 0
-            contentProgress.target = 0
             lidOpen.target = 0
             beginAnimating()
-            // Matches the close spring: the panel must not vanish mid-animation.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-                completion?()
-            }
         } else {
             openProgress.snap(to: 0)
+            lidOpen.snap(to: 0)
+            closeCompletion = nil
+            isClosing = false
             completion?()
         }
     }
@@ -268,7 +290,6 @@ final class RadialMenuView: NSView {
         var moving = false
 
         openProgress.step(dt)
-        contentProgress.step(dt)
         sweepProgress.step(dt)
         hubHover.step(dt)
         hubPress.step(dt)
@@ -277,7 +298,16 @@ final class RadialMenuView: NSView {
         tiltPitch.step(dt)
         tiltRoll.step(dt)
         lidOpen.step(dt)
-        if openProgress.isAnimating || contentProgress.isAnimating || sweepProgress.isAnimating
+
+        // The sweep is part of the opening gesture, not a separate beat: it fires the moment
+        // the card is revealed behind the lid, so the print, the needle of light and the lid
+        // landing all resolve together.
+        if !sweepStarted, !isClosing, printProgress >= 0.98 {
+            sweepStarted = true
+            sweepProgress.target = 1
+        }
+
+        if openProgress.isAnimating || sweepProgress.isAnimating
             || hubHover.isAnimating || hubPress.isAnimating || pageSwap.isAnimating || needle.isAnimating
             || tiltPitch.isAnimating || tiltRoll.isAnimating || lidOpen.isAnimating {
             moving = true
@@ -291,9 +321,20 @@ final class RadialMenuView: NSView {
 
         needsDisplay = true
 
-        if !moving {
+        // A closing menu is finished once the compass is too small to see, not once every
+        // spring has run out of its asymptote. Waiting for `isAnimating` held the panel on
+        // screen for ~600ms after the lid had already shut, because a spring spends most of
+        // its life in the last few percent of its travel. At 0.02 the box is a third of a
+        // degree wide and the paint below it is fully transparent.
+        let closedEnough = isClosing && openProgress.value <= 0.02
+        if !moving || closedEnough {
             driver.stop()
-            if isClosing { isClosing = false }
+            if isClosing {
+                isClosing = false
+                let completion = closeCompletion
+                closeCompletion = nil
+                completion?()
+            }
         }
     }
 
@@ -467,7 +508,7 @@ final class RadialMenuView: NSView {
         guard open > 0.001 else { return }
 
         let appear = Easing.outCubic(min(1, max(0, open)))
-        let content = Easing.outCubic(min(1, max(0, contentProgress.value)))
+        let content = Easing.outCubic(printProgress)
 
         // The compass is a solid object, so it enters by tipping back rather than by scaling:
         // a scale from nothing looks like a sticker being placed, and a real lid has weight.

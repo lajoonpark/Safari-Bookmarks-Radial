@@ -1017,7 +1017,7 @@ final class CompassLidTests: XCTestCase {
     func testOpeningLiftsTheFarEdgeUpAndTowardTheViewer() {
         let shut = CompassLid(metrics: metrics, openness: 0)
         let open = CompassLid(metrics: metrics, openness: 1)
-        let farEdge = Point3D(x: 0, y: shut.hingeY + 2 * metrics.caseRadius)
+        let farEdge = Point3D(x: 0, y: shut.hingeY + 2 * metrics.lidRadius)
         XCTAssertGreaterThan(shut.swing(farEdge).y, 0, "shut, the lid's far edge sits over the case")
         XCTAssertLessThan(open.swing(farEdge).y, shut.hingeY,
                           "open, it must have risen clear above the hinge")
@@ -1025,14 +1025,109 @@ final class CompassLidTests: XCTestCase {
                              "and swung out toward the viewer")
     }
 
+    /// A shut lid has to actually shut: it must cover the card it closes over.
+    ///
+    /// This is the constraint that decides `lidRadius`, and it is the one that is easy to get
+    /// wrong by eye. Making the lid smaller makes the *open* instrument less top-heavy, which
+    /// is tempting, but `cardRadius / caseRadius` sets a hard floor: below it the lid no longer
+    /// reaches across the dial and the "closed" compass has paper showing past its own lid.
+    func testTheShutLidCoversTheCard() {
+        let lid = CompassLid(metrics: metrics, openness: 0)
+        // The lid is centred on `x = 0` and hinged on its own top rim, so `farEdge` simplifies to
+        // exactly `lidRadius`. That one number therefore settles both axes: it must clear the
+        // card's radius in `x`, and the same inequality puts the far edge past `+cardRadius` in
+        // `y`. Asserting anything against `-lid.hingeY` here would compare the radius to itself.
+        let farEdge = lid.hingeY + 2 * metrics.lidRadius
+        XCTAssertEqual(farEdge, metrics.lidRadius, accuracy: 1e-9)
+        XCTAssertGreaterThanOrEqual(farEdge, metrics.cardRadius,
+                                    "a smaller lid leaves a crescent of card uncovered when shut")
+    }
+
+    /// The hinge sits exactly on the lid's own rim, and that rim is inside the case's radius
+    /// but outside the card's.
+    ///
+    /// Pivot-on-the-rim is what stops the lid floating free as it swings: every point on the
+    /// hinge line is a fixed point of the rotation. The two radius inequalities are what make a
+    /// pocket compass work — the lid closes inside the case's raised lip, and it is still wide
+    /// enough to cover the card.
+    func testHingeSitsOnTheLidRimBetweenCardAndCase() {
+        let lid = CompassLid(metrics: metrics, openness: 0)
+        XCTAssertEqual(lid.hingeY, -metrics.lidRadius, accuracy: 1e-9)
+        XCTAssertEqual(lid.radius, metrics.lidRadius, accuracy: 1e-9)
+        XCTAssertLessThan(metrics.lidRadius, metrics.caseRadius,
+                          "the lid closes inside the case's lip")
+        XCTAssertGreaterThan(metrics.lidRadius, metrics.cardRadius,
+                             "and it is wider than the card it covers")
+    }
+
+    /// The lid has to lean well past vertical. At 90° it is exactly edge-on to the camera and
+    /// projects to a flat sliver, which reads as a plate seen edge-on rather than an open lid.
+    ///
+    /// The bound is 110°, not 120°: the value is tuned by eye at 120° and an assertion that sits
+    /// exactly on the chosen number turns any downward nudge into a failure for reasons that
+    /// have nothing to do with the property being tested. What matters is that the lid is
+    /// clearly past vertical, and the height/width check below pins that directly.
+    func testTheOpenLidShowsItsFaceRatherThanItsEdge() {
+        XCTAssertGreaterThan(CompassMetrics.lidOpenAngle, .pi / 2 + .pi / 9)
+        let open = CompassLid(metrics: metrics, openness: 1)
+        let camera = CompassCamera(tilt: RadialTilt(pitch: 0, roll: 0,
+                                                   eyeDistance: metrics.cardRadius * 8))
+        let near = camera.project(open.swing(Point3D(x: 0, y: metrics.lidRadius * 0.9, z: 0))).point
+        let far = camera.project(open.swing(Point3D(x: 0, y: -metrics.lidRadius * 0.9, z: 0))).point
+        let side = camera.project(open.swing(Point3D(x: metrics.lidRadius * 0.9, y: 0, z: 0))).point
+        let height = abs(near.y - far.y)
+        let width = abs(side.x) * 2
+        XCTAssertGreaterThan(height / width, 0.45,
+                             "the lid's face must project at least this tall relative to its width")
+    }
+
     /// Straight up is the moment the lid stands perpendicular to the card — the pose that
     /// makes its inside face most legible.
     func testAtRightAnglesTheLidStandsSquareToTheCard() {
-        let quarter = CompassLid(metrics: metrics, openness: 90 / 112)
-        let farEdge = Point3D(x: 0, y: quarter.hingeY + 2 * metrics.caseRadius, z: quarter.hingeZ)
+        let quarter = CompassLid(
+            metrics: metrics,
+            openness: (.pi / 2) / CompassMetrics.lidOpenAngle
+        )
+        let farEdge = Point3D(x: 0, y: quarter.hingeY + 2 * metrics.lidRadius, z: quarter.hingeZ)
         let swung = quarter.swing(farEdge)
         XCTAssertEqual(swung.y, quarter.hingeY, accuracy: 0.5)
-        XCTAssertEqual(swung.z - quarter.hingeZ, 2 * metrics.caseRadius, accuracy: 0.5)
+        XCTAssertEqual(swung.z - quarter.hingeZ, 2 * metrics.lidRadius, accuracy: 0.5)
+    }
+
+    /// The lid must not lag the case.
+    ///
+    /// This is the shape of the "⌘E appears, pauses, then flips the lid" complaint. The lid's
+    /// spring used to settle in ~410ms against the case's ~110ms, so the box landed, sat still,
+    /// and only then did the lid swing. Geometry alone cannot catch that: both poses are valid,
+    /// it is the *timing* that reads as a stutter. Simulating the two springs here pins the
+    /// relationship instead of the absolute numbers, so tuning either one stays legal as long as
+    /// the lid does not fall behind again.
+    func testLidDoesNotFallBehindTheCaseItSitsIn() {
+        /// Time to cover 98% of the travel — i.e. time to *look* open. Measuring the point at
+        /// which the spring is mathematically at rest was useless here: every spring spends
+        /// most of its life in the last few percent, so all of them came out at the same
+        /// half-second and the assertion could not tell a good tuning from a bad one.
+        func timeToOpen(_ stiffness: Double, _ damping: Double, kick: Double = 0) -> Double {
+            var value = 0.0, speed = kick, time = 0.0
+            let dt = 1.0 / 120
+            while time < 2 {
+                speed += (stiffness * (1 - value) - damping * speed) * dt
+                value += speed * dt
+                time += dt
+                if value >= 0.98 { return time }
+            }
+            return time
+        }
+        let caseOpen = timeToOpen(420, 27, kick: 4.6)
+        let lidOpen = timeToOpen(700, 38, kick: 14)
+        XCTAssertLessThan(lidOpen, caseOpen,
+                          "the lid must land before the case finishes moving, not long after it")
+        // And it has to be genuinely quick. This used to allow a quarter of a second, which the
+        // first pass spent entirely on the case: the whole gesture read as two beats because
+        // the box slid into place and only then did anything else happen. One gesture is
+        // ~150ms at most, so both ends of it have to land inside that.
+        XCTAssertLessThan(lidOpen, 0.13)
+        XCTAssertLessThan(caseOpen, 0.18)
     }
 
     func testOpennessIsClampedToTheAnglesWeSupport() {

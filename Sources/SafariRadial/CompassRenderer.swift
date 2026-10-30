@@ -42,18 +42,26 @@ final class CompassRenderer {
         drawLidShadow(in: context, state: state)
 
         // From here down everything is in card space: origin at the hub, y down, projected.
-        drawLid(in: context, state: state)
         drawCaseWall(in: context, state: state, metrics: m)
         drawLug(in: context, state: state, metrics: m)
         drawBrass(in: context, state: state, metrics: m)
-        drawHinge(in: context, state: state, metrics: m)
         drawCard(in: context, state: state, metrics: m)
         drawCardPrinting(in: context, state: state, metrics: m)
+        // After the card, not before it. The barrel and its knuckles stand proud of the card's
+        // plane on the case's rim, and they overhang the card's edge by a few points; drawn
+        // underneath, the card painted over the knuckles and the hinge — and the rust in it —
+        // disappeared behind the dial.
+        drawHinge(in: context, state: state, metrics: m)
         drawSliceWash(in: context, state: state, metrics: m)
         drawNeedle(in: context, state: state, metrics: m)
         drawSliceLabels(in: context, state: state, metrics: m)
         drawHub(in: context, state: state, metrics: m)
         drawSweep(in: context, state: state, metrics: m)
+        // Last, because it is genuinely the topmost thing here: shut, it lies just above the
+        // card; swinging, its lower half passes in front of the card's near edge. Drawing it
+        // before the card (as this used to) let the card paint over the lid, so the lid looked
+        // clipped along a straight line for the whole first half of the opening swing.
+        drawLid(in: context, state: state)
 
         context.restoreGState()
     }
@@ -219,35 +227,57 @@ extension CompassRenderer {
         context.restoreGState()
     }
 
-    /// The lid casts onto the card. Without it an open lid reads as pasted on rather than
-    /// hinged, which is the difference the whole illusion turns on.
+    /// The lid's shadow on the case top.
+    ///
+    /// Clipped to the case and kept shallow. A free-floating ellipse straddling the hinge is
+    /// what made the lid read as detached: it drew a dark band in the air between lid and box,
+    /// which the eye takes as a gap. Painted inside the brass instead, it lands on the object.
     private func drawLidShadow(in context: CGContext, state: State) {
-        let openness = state.lid.openness
-        guard openness > 0.02 else { return }
+        let angle = state.lid.angle
+        guard sin(angle) > 0.12 else { return }
         let m = state.metrics
-        let lift = sin(min(.pi, state.lid.angle))
-        let centre = CGPoint(x: 0, y: -m.caseRadius * 0.86)
-        let spread = m.caseRadius * (0.95 - 0.25 * lift)
-        let colours = [
-            NSColor.black.withAlphaComponent(0.34 * lift * CGFloat(state.contentAlpha)).cgColor,
-            NSColor.black.withAlphaComponent(0.16 * lift * CGFloat(state.contentAlpha)).cgColor,
-            NSColor.black.withAlphaComponent(0).cgColor,
-        ] as CFArray
-        guard let gradient = CGGradient(
-            colorsSpace: CGColorSpaceCreateDeviceRGB(),
-            colors: colours,
-            locations: [0, 0.55, 1] as [CGFloat]
-        ) else { return }
+        let near = min(1, max(0, (CGFloat(sin(angle)) - 0.12) / 0.6))
+        let radius = m.lidRadius
+        let alpha = CGFloat(state.contentAlpha)
+
         context.saveGState()
-        context.translateBy(x: centre.x, y: centre.y)
-        context.drawRadialGradient(
-            gradient,
-            startCenter: .zero,
-            startRadius: spread * 0.1,
-            endCenter: .zero,
-            endRadius: spread,
-            options: []
-        )
+        let silhouette = (0...96).map { step -> CGPoint in
+            let angle = CGFloat(step) / 96 * 2 * .pi
+            return state.camera.project(
+                x: m.caseRadius * sin(angle), y: -m.caseRadius * cos(angle), z: m.cardDepth
+            )
+        }
+        let clip = CGMutablePath()
+        clip.addLines(between: silhouette)
+        clip.closeSubpath()
+        context.addPath(clip)
+        context.clip()
+
+        let hinge = state.camera.project(Point3D(x: 0, y: state.lid.hingeY, z: 0)).point
+        let top = hinge.y - radius * 0.02
+        if let gradient = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: [
+                NSColor(calibratedRed: 0.094, green: 0.063, blue: 0.031, alpha: 1)
+                    .withAlphaComponent(0.30 * near * alpha).cgColor,
+                NSColor(calibratedRed: 0.094, green: 0.063, blue: 0.031, alpha: 1)
+                    .withAlphaComponent(0.13 * near * alpha).cgColor,
+                NSColor(calibratedRed: 0.094, green: 0.063, blue: 0.031, alpha: 1)
+                    .withAlphaComponent(0).cgColor,
+            ] as CFArray,
+            locations: [0, 0.45, 1] as [CGFloat]
+        ) {
+            context.saveGState()
+            context.clip(to: CGRect(x: -m.caseRadius, y: top,
+                                    width: m.caseRadius * 2, height: radius * 0.40))
+            context.drawLinearGradient(
+                gradient,
+                start: CGPoint(x: 0, y: top),
+                end: CGPoint(x: 0, y: top + radius * 0.34),
+                options: []
+            )
+            context.restoreGState()
+        }
         context.restoreGState()
     }
 }
@@ -259,84 +289,364 @@ extension CompassRenderer {
     private func drawLid(in context: CGContext, state: State) {
         let lid = state.lid
         guard lid.openness > 0.004 else { return }
-        let m = state.metrics
         let radius = lid.radius
         let alpha = CGFloat(state.contentAlpha)
 
         func lidPoint(_ angle: CGFloat, _ r: CGFloat) -> CGPoint {
-            let flat = Point3D(radius: r, angle: angle)
-            return state.camera.project(lid.swing(flat)).point
+            state.camera.project(lid.swing(Point3D(radius: r, angle: angle))).point
+        }
+        /// A point given in the lid's own plane, cartesian, origin at its boss.
+        func lidFlat(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            state.camera.project(lid.swing(Point3D(x: x, y: y, z: 0))).point
         }
 
-        let rim = (0...90).map { lidPoint(CGFloat($0) / 90 * 2 * .pi, radius) }
+        let rim = (0...96).map { lidPoint(CGFloat($0) / 96 * 2 * .pi, radius) }
+        let rimPath = CGMutablePath()
+        rimPath.addLines(between: rim)
+        rimPath.closeSubpath()
 
-        // Underside: the same disc nudged, so a thickness shows on the edge that turns away.
+        var bounds = CGRect(origin: rim[0], size: .zero)
+        for point in rim { bounds = bounds.union(CGRect(origin: point, size: .zero)) }
+        let centre = CGPoint(x: bounds.midX, y: bounds.midY)
+
+        // The plate's milled edge, as a thin crescent beneath the face. It has to be thin and
+        // warm: a thick dark band here reads as a gap between lid and case rather than as
+        // metal, and makes the lid look like it is floating.
         context.saveGState()
-        context.translateBy(x: 0, y: -m.cardRadius * 0.026 * sin(lid.angle))
-        fill(rim, context, CompassTheme.brassDeep.withAlphaComponent(alpha))
+        context.translateBy(x: 0, y: radius * 0.012 * sin(lid.angle))
+        context.addPath(rimPath)
+        context.setFillColor(NSColor(calibratedRed: 0.239, green: 0.184, blue: 0.110, alpha: 1)
+            .withAlphaComponent(alpha).cgColor)
+        context.fillPath()
         context.restoreGState()
 
-        // Face.
-        fill(rim, context, CompassTheme.brassLit.withAlphaComponent(alpha))
-
-        // Interior recess, clipped to the lid.
+        // Face. The lid leans away from the viewer, so its inside is a step darker than the
+        // case's bright top — lit like the case it reads as a plate hovering over the brass.
         context.saveGState()
-        let clip = CGMutablePath()
-        clip.addLines(between: rim)
-        clip.closeSubpath()
-        context.addPath(clip)
+        context.addPath(rimPath)
+        context.setFillColor(CompassTheme.brassMid.withAlphaComponent(alpha).cgColor)
+        context.fillPath()
+        context.addPath(rimPath)
         context.clip()
 
-        let recess = (0...80).map { lidPoint(CGFloat($0) / 80 * 2 * .pi, radius * 0.80) }
-        let recessPath = CGMutablePath()
-        recessPath.addLines(between: recess)
-        recessPath.closeSubpath()
-        let top = state.camera.project(lid.swing(Point3D(x: 0, y: lid.hingeY - radius, z: 0))).point
+        // Light comes from the lower left here: the plate tips *away*, so the near edge is
+        // the shaded one and the far edge catches the light.
         if let gradient = CGGradient(
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
             colors: [
-                CompassTheme.lidRecessInner.withAlphaComponent(alpha).cgColor,
-                CompassTheme.lidRecessOuter.withAlphaComponent(alpha).cgColor,
+                NSColor(calibratedRed: 0.290, green: 0.235, blue: 0.114, alpha: 1).withAlphaComponent(alpha).cgColor,
+                NSColor(calibratedRed: 0.431, green: 0.357, blue: 0.224, alpha: 1).withAlphaComponent(alpha).cgColor,
+                NSColor(calibratedRed: 0.545, green: 0.463, blue: 0.286, alpha: 1).withAlphaComponent(alpha).cgColor,
+                NSColor(calibratedRed: 0.490, green: 0.416, blue: 0.267, alpha: 1).withAlphaComponent(alpha).cgColor,
             ] as CFArray,
-            locations: [0, 1] as [CGFloat]
+            locations: [0, 0.20, 0.52, 1] as [CGFloat]
         ) {
+            context.drawLinearGradient(
+                gradient,
+                start: CGPoint(x: bounds.maxX, y: bounds.maxY),
+                end: CGPoint(x: bounds.minX, y: bounds.minY),
+                options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+            )
+        }
+
+        // Turned finish: alternating lit and shadowed bands, tightening toward the bead, because
+        // a spun surface catches light on each ridge. Single dark rings read as a bullseye.
+        let grooves = 34
+        for step in 0..<grooves {
+            let t = CGFloat(step) / CGFloat(grooves)
+            let groove = radius * (0.26 + 0.70 * t)
+            let ring = (0...60).map { lidPoint(CGFloat($0) / 60 * 2 * .pi, groove) }
+            let strength = (0.05 + 0.05 * (1 - t))
+            let colour: NSColor = step % 2 == 0
+                ? NSColor.black.withAlphaComponent(strength * alpha)
+                : NSColor(calibratedRed: 1, green: 0.965, blue: 0.871, alpha: 1)
+                    .withAlphaComponent(strength * alpha)
+            stroke(ring, context, colour, width: max(0.7, radius * 0.0055))
+        }
+
+        // Specular sweep across the far side, and a vignette into the bead, so the plate turns
+        // over into its own edge instead of ending at a line.
+        if let sheen = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: [
+                NSColor(calibratedRed: 1, green: 0.965, blue: 0.863, alpha: 1).withAlphaComponent(0.20 * alpha).cgColor,
+                NSColor(calibratedRed: 1, green: 0.965, blue: 0.863, alpha: 1).withAlphaComponent(0.05 * alpha).cgColor,
+                NSColor(calibratedRed: 0.078, green: 0.055, blue: 0.027, alpha: 1).withAlphaComponent(0.18 * alpha).cgColor,
+            ] as CFArray,
+            locations: [0, 0.40, 1] as [CGFloat]
+        ) {
+            context.drawRadialGradient(
+                sheen,
+                startCenter: CGPoint(x: bounds.minX + bounds.width * 0.34,
+                                     y: bounds.maxY - bounds.height * 0.34),
+                startRadius: radius * 0.04,
+                endCenter: centre,
+                endRadius: max(bounds.width, bounds.height) * 0.58,
+                options: []
+            )
+        }
+        if let vignette = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: [
+                NSColor.black.withAlphaComponent(0).cgColor,
+                NSColor.black.withAlphaComponent(0.10 * alpha).cgColor,
+                NSColor.black.withAlphaComponent(0.42 * alpha).cgColor,
+            ] as CFArray,
+            locations: [0, 0.72, 1] as [CGFloat]
+        ) {
+            context.drawRadialGradient(
+                vignette,
+                startCenter: centre,
+                startRadius: radius * 0.55,
+                endCenter: centre,
+                endRadius: radius * 1.02,
+                options: []
+            )
+        }
+
+        // Engraved double border inside the bead: a dark cut with a lit lower lip.
+        for (r, colour, width) in [
+            (radius * 0.855, NSColor.black.withAlphaComponent(0.30 * alpha), CGFloat(1.1)),
+            (radius * 0.815, NSColor.black.withAlphaComponent(0.22 * alpha), CGFloat(0.9)),
+            (radius * 0.800, NSColor.white.withAlphaComponent(0.13 * alpha), CGFloat(0.8)),
+        ] {
+            let ring = (0...96).map { lidPoint(CGFloat($0) / 96 * 2 * .pi, r) }
+            stroke(ring, context, colour, width: width)
+        }
+
+        drawLidRose(in: context, radius: radius, alpha: alpha, point: lidPoint, flat: lidFlat)
+
+        // Maker's mark, struck into the plate below the rose.
+        drawText(
+            "SAFARI  RADIAL",
+            at: lidFlat(0, radius * 0.50),
+            scale: min(1.0, max(0.62, abs(cos(lid.angle)) + 0.55)),
+            font: CompassTheme.serif(max(5.5, radius * 0.052), .semibold),
+            colour: NSColor.black.withAlphaComponent(0.30 * alpha),
+            in: context
+        )
+
+        // Broad mottling first, then the sharper tarnish over it, so the lid's face carries the
+        // same unevenness as the card rather than reading as a clean plate.
+        for blotch in grain.lidUnevenness(radius: radius) {
+            let point = lidFlat(blotch.x * radius, blotch.y * radius)
+            let spread = blotch.radius * radius * 1.1
+            guard let gradient = CGGradient(
+                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: [
+                    CompassTheme.patina.withAlphaComponent(blotch.alpha * CompassTheme.wearGain * alpha).cgColor,
+                    CompassTheme.patina.withAlphaComponent(0).cgColor,
+                ] as CFArray,
+                locations: [0, 1]
+            ) else { continue }
             context.saveGState()
-            context.addPath(recessPath)
-            context.clip()
+            context.translateBy(x: point.x, y: point.y)
             context.drawRadialGradient(
                 gradient,
-                startCenter: top,
-                startRadius: radius * 0.1,
-                endCenter: top,
-                endRadius: radius * 0.85,
+                startCenter: .zero, startRadius: 0,
+                endCenter: .zero, endRadius: spread,
                 options: []
             )
             context.restoreGState()
         }
 
-        // Turning circles: the lathe marks a spun lid carries.
-        for step in 1...7 {
-            let ring = (0...70).map { lidPoint(CGFloat($0) / 70 * 2 * .pi, radius * 0.80 * CGFloat(step) / 7.4) }
-            stroke(ring, context,
-                   NSColor.black.withAlphaComponent((0.10 + 0.02 * CGFloat(step)) * alpha),
-                   width: 0.9)
+        // Tarnish, weighted to the outer third where a thumb never reaches.
+        for blot in grain.lidPatina(radius: radius) {
+            let point = lidFlat(blot.x * radius, blot.y * radius)
+            drawWear(blot, at: point, unit: radius * 1.15, colour: CompassTheme.patina,
+                     alpha: alpha * CompassTheme.wearGain, in: context)
+        }
+        // Rust, only along the hinge seam where moisture collects.
+        for spot in grain.rust(radius: radius) {
+            let point = lidFlat(spot.x * radius, spot.y * radius)
+            drawWear(spot, at: point, unit: radius, colour: CompassTheme.rust,
+                     alpha: alpha * CompassTheme.wearGain, in: context)
         }
 
-        // Maker's mark, engraved on the inside of the lid.
-        let mark = NSAttributedString(string: "SAFARI  RADIAL", attributes: [
-            .font: CompassTheme.serif(max(6, radius * 0.042), .semibold),
-            .foregroundColor: CompassTheme.brassHi.withAlphaComponent(0.52 * alpha),
-            .kern: radius * 0.007,
-        ])
-        let markSize = mark.size()
-        mark.draw(at: CGPoint(x: top.x - markSize.width / 2, y: top.y - radius * 0.16))
         context.restoreGState()
 
-        // Lit rim where the lid turns toward the light.
-        stroke(rim, context,
-               NSColor.white.withAlphaComponent((0.06 + 0.22 * max(0, sin(lid.angle))) * alpha),
-               width: 1.1)
+        // Bead: only the far arc is outlined. A full outline crosses the case at the hinge and
+        // makes the lid look detached from the box.
+        let farArc = (0...64).map { lidPoint(.pi + CGFloat($0) / 64 * .pi, radius) }
+        stroke(farArc, context, NSColor.black.withAlphaComponent(0.62 * alpha),
+               width: max(1.1, radius * 0.014))
+        let lit = (0...40).map { lidPoint(.pi * 1.18 + CGFloat($0) / 40 * .pi * 0.85, radius) }
+        stroke(lit, context,
+               NSColor.white.withAlphaComponent((0.10 + 0.24 * abs(sin(lid.angle))) * alpha),
+               width: max(0.9, radius * 0.007))
     }
+
+    /// One soft blot of wear — tarnish or rust — as a radial gradient.
+    private func drawWear(
+        _ blot: CompassGrain.Blot,
+        at point: CGPoint,
+        unit: CGFloat,
+        colour: NSColor,
+        alpha: CGFloat,
+        in context: CGContext
+    ) {
+        let spread = blot.radius * unit
+        guard let gradient = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: [
+                colour.withAlphaComponent(blot.alpha * alpha).cgColor,
+                colour.withAlphaComponent(blot.alpha * 0.5 * alpha).cgColor,
+                colour.withAlphaComponent(0).cgColor,
+            ] as CFArray,
+            locations: [0, 0.52, 1] as [CGFloat]
+        ) else { return }
+        context.saveGState()
+        context.translateBy(x: point.x, y: point.y)
+        context.drawRadialGradient(
+            gradient,
+            startCenter: .zero, startRadius: 0,
+            endCenter: .zero, endRadius: spread,
+            options: []
+        )
+        context.restoreGState()
+    }
+
+    /// The engraved compass rose on the lid's plate.
+    ///
+    /// An open compass shows its lid, and a lid with nothing on it reads as a blank disc no
+    /// matter how well it is shaded — this is the detail that makes it an instrument. Cut
+    /// rather than inked: every line is a shadow with a thin light edge under it.
+    private func drawLidRose(
+        in context: CGContext,
+        radius: CGFloat,
+        alpha: CGFloat,
+        point: (CGFloat, CGFloat) -> CGPoint,
+        flat: (CGFloat, CGFloat) -> CGPoint
+    ) {
+        let outer = radius * 0.555
+        let waist = radius * 0.125
+
+        // Degree ticks between the rose and the bead. Struck, not painted: each is a dark
+        // cut with a lit edge on its far side, which is what makes them survive the shallow
+        // angle the lid is seen at.
+        for index in 0..<72 {
+            let angle = CGFloat(index) / 72 * 2 * .pi
+            let isLong = index % 9 == 0
+            let inner = radius * (isLong ? 0.845 : 0.872)
+            let outerR = radius * 0.905
+            let a = point(angle, inner)
+            let b = point(angle, outerR)
+            context.saveGState()
+            let tickAlpha: CGFloat = isLong ? 0.40 : 0.24
+            context.setStrokeColor(NSColor.black.withAlphaComponent(tickAlpha * alpha).cgColor)
+            context.setLineWidth(isLong ? 1.0 : 0.7)
+            context.move(to: a)
+            context.addLine(to: b)
+            context.strokePath()
+            context.restoreGState()
+        }
+
+        // The plate the rose is cut into sits a hair proud of the field and a touch lighter.
+        // Without it the points have nothing to be raised *above* and read as a drawing on a
+        // disc rather than as struck metal.
+        let plateCentre = flat(0, 0)
+        if let plate = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: [
+                NSColor(calibratedRed: 0.886, green: 0.808, blue: 0.651, alpha: 0.10 * alpha).cgColor,
+                NSColor(calibratedRed: 0.839, green: 0.753, blue: 0.588, alpha: 0.05 * alpha).cgColor,
+                NSColor(calibratedRed: 0.706, green: 0.612, blue: 0.439, alpha: 0).cgColor,
+            ] as CFArray,
+            locations: [0, 0.7, 1] as [CGFloat]
+        ) {
+            context.saveGState()
+            let path = CGMutablePath()
+            path.addLines(between: (0...96).map { point(CGFloat($0) / 96 * 2 * .pi, outer * 1.06) })
+            path.closeSubpath()
+            context.addPath(path)
+            context.clip()
+            context.drawRadialGradient(
+                plate, startCenter: plateCentre, startRadius: 0,
+                endCenter: plateCentre, endRadius: outer * 1.06, options: []
+            )
+            context.restoreGState()
+        }
+
+        // The rose itself. Four long points and four short ones, alternating.
+        for index in 0..<8 {
+            let angle = CGFloat(index) / 8 * 2 * .pi
+            let isLong = index % 2 == 0
+            let tip = isLong ? outer : outer * 0.62
+            let w = isLong ? waist * 0.68 : waist * 0.62
+            let lit: CGFloat = isLong ? 0.19 : 0.13
+            let dark: CGFloat = isLong ? 0.39 : 0.30
+            let apex = point(angle, tip)
+            let left = point(angle - .pi / 2, w)
+            let right = point(angle + .pi / 2, w)
+            let spine = point(angle, w * 0.35)
+
+            let star = CGMutablePath()
+            star.addLines(between: [left, apex, right])
+            star.closeSubpath()
+            context.addPath(star)
+            context.setStrokeColor(NSColor.black.withAlphaComponent(0.46 * alpha).cgColor)
+            context.setLineWidth(max(0.8, tip * 0.012))
+            context.strokePath()
+
+            // Split down the spine: one half of each point catches the light and the other
+            // holds shadow. Without the split the rose is a drawn star, not cut metal.
+            let litFace = CGMutablePath()
+            litFace.addLines(between: [spine, apex, left])
+            litFace.closeSubpath()
+            context.addPath(litFace)
+            context.setFillColor(NSColor.white.withAlphaComponent(lit * alpha).cgColor)
+            context.fillPath()
+
+            let darkFace = CGMutablePath()
+            darkFace.addLines(between: [spine, apex, right])
+            darkFace.closeSubpath()
+            context.addPath(darkFace)
+            context.setFillColor(NSColor.black.withAlphaComponent(dark * alpha).cgColor)
+            context.fillPath()
+        }
+
+        // The cut circle the points sit inside.
+        for (r, colour, width) in [
+            (outer * 1.045, NSColor.black.withAlphaComponent(0.34 * alpha), CGFloat(max(1.0, radius * 0.012))),
+            (outer * 1.020, NSColor.white.withAlphaComponent(0.14 * alpha), CGFloat(max(0.8, radius * 0.008))),
+        ] {
+            let ring = (0...96).map { point(CGFloat($0) / 96 * 2 * .pi, r) }
+            stroke(ring, context, colour, width: width)
+        }
+
+        // Central boss. Every point's spine converges at the middle, and without a struck
+        // disc over the crossing the rose reads as a tangle of lines.
+        let bossR = radius * 0.072
+        let boss = (0...40).map { point(CGFloat($0) / 40 * 2 * .pi, bossR) }
+        let centre = flat(0, 0)
+        if let gradient = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: [
+                NSColor(calibratedRed: 0.78, green: 0.67, blue: 0.45, alpha: 0.55 * alpha).cgColor,
+                NSColor(calibratedRed: 0.47, green: 0.38, blue: 0.22, alpha: 0.45 * alpha).cgColor,
+                NSColor(calibratedRed: 0.18, green: 0.13, blue: 0.07, alpha: 0.55 * alpha).cgColor,
+            ] as CFArray,
+            locations: [0, 0.65, 1] as [CGFloat]
+        ) {
+            context.saveGState()
+            let path = CGMutablePath()
+            path.addLines(between: boss)
+            path.closeSubpath()
+            context.addPath(path)
+            context.clip()
+            context.drawRadialGradient(
+                gradient,
+                startCenter: CGPoint(x: centre.x - bossR * 0.3, y: centre.y + bossR * 0.3),
+                startRadius: bossR * 0.1,
+                endCenter: centre,
+                endRadius: bossR,
+                options: []
+            )
+            context.restoreGState()
+        }
+        stroke(boss, context, NSColor.black.withAlphaComponent(0.40 * alpha), width: 0.9)
+    }
+
 
 }
 
@@ -461,8 +771,8 @@ extension CompassRenderer {
             guard let gradient = CGGradient(
                 colorsSpace: CGColorSpaceCreateDeviceRGB(),
                 colors: [
-                    CompassTheme.patina.withAlphaComponent(blot.alpha * alpha).cgColor,
-                    CompassTheme.patina.withAlphaComponent(blot.alpha * 0.55 * alpha).cgColor,
+                    CompassTheme.patina.withAlphaComponent(blot.alpha * CompassTheme.wearGain * alpha).cgColor,
+                    CompassTheme.patina.withAlphaComponent(blot.alpha * 0.55 * CompassTheme.wearGain * alpha).cgColor,
                     CompassTheme.patina.withAlphaComponent(0).cgColor,
                 ] as CFArray,
                 locations: [0, 0.6, 1]
@@ -488,7 +798,7 @@ extension CompassRenderer {
             let from = state.camera.project(Point3D(x: buff.radius * sin(buff.angle), y: -buff.radius * cos(buff.angle), z: metrics.cardDepth))
             let to = state.camera.project(Point3D(x: buff.radius * sin(buff.angle + buff.length), y: -buff.radius * cos(buff.angle + buff.length), z: metrics.cardDepth))
             context.saveGState()
-            context.setStrokeColor(CompassTheme.brassHi.withAlphaComponent(buff.alpha * alpha).cgColor)
+            context.setStrokeColor(CompassTheme.brassHi.withAlphaComponent(buff.alpha * CompassTheme.wearGain * alpha).cgColor)
             context.setLineWidth(max(1.4, metrics.cardRadius * 0.012))
             context.setLineCap(.round)
             context.move(to: from.point)
@@ -506,21 +816,43 @@ extension CompassRenderer {
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
             colors: [
                 CompassTheme.patina.withAlphaComponent(0).cgColor,
-                CompassTheme.patina.withAlphaComponent(0.16 * alpha).cgColor,
-                CompassTheme.patina.withAlphaComponent(0.30 * alpha).cgColor,
+                CompassTheme.tarnishWarm.withAlphaComponent(0.10 * alpha).cgColor,
+                CompassTheme.patina.withAlphaComponent(0.22 * alpha).cgColor,
+                CompassTheme.patina.withAlphaComponent(0.44 * alpha).cgColor,
             ] as CFArray,
-            locations: [0, 0.65, 1]
+            locations: [0, 0.55, 0.82, 1]
         ) else { return }
         context.saveGState()
         context.drawRadialGradient(
             gradient,
             startCenter: .zero,
-            startRadius: outer * 0.93,
+            startRadius: outer * 0.86,
             endCenter: .zero,
             endRadius: outer,
             options: []
         )
         context.restoreGState()
+
+        // Hands. The two places a pocket compass is held are the case's lower edge and the
+        // thumb-grip beside the hinge, so those two arcs are worn brighter than the rest of a
+        // tarnished rim. Drawn as broad, very soft crescents under the tarnish, because polish
+        // is a thinning of the film, not a paint.
+        for (from, to) in [(CGFloat(0.52), CGFloat(0.86)), (CGFloat(1.42), CGFloat(1.62))] {
+            var arc: [CGPoint] = []
+            for step in 0...40 {
+                let t = from + (to - from) * CGFloat(step) / 40
+                arc.append(state.camera.project(
+                    x: outer * 0.975 * sin(t * .pi), y: -outer * 0.975 * cos(t * .pi), z: 0
+                ).point)
+            }
+            context.saveGState()
+            context.setLineCap(.round)
+            context.setStrokeColor(CompassTheme.brassHi.withAlphaComponent(0.16 * alpha).cgColor)
+            context.setLineWidth(outer * 0.075)
+            context.addLines(between: arc)
+            context.strokePath()
+            context.restoreGState()
+        }
     }
 
     /// The knurled edge: alternating lit and shadowed ridges, drawn from the card's plane so
@@ -631,7 +963,11 @@ extension CompassRenderer {
     /// attached rather than floating above the box.
     private func drawHinge(in context: CGContext, state: State, metrics: CompassMetrics) {
         let alpha = CGFloat(state.contentAlpha)
-        let y = -metrics.caseRadius
+        // On the lid's own pivot, not the case's rim. These used to be the same line, so the
+        // barrel could be drawn at `-caseRadius` and look right; now that the lid closes inside
+        // the lip and pivots on a short strap, drawing the barrel on the case's rim leaves it
+        // floating a visible gap below the lid it is supposed to carry.
+        let y = CompassLid(metrics: metrics).hingeY
         let z = -metrics.cardDepth * 0.5
 
         let shaftFrom = state.camera.project(Point3D(x: -metrics.hingeHalfSpan * 1.11, y: y, z: z))
@@ -680,6 +1016,43 @@ extension CompassRenderer {
             context.setStrokeColor(NSColor.black.withAlphaComponent(0.50 * alpha).cgColor)
             context.setLineWidth(0.9)
             context.strokePath()
+            context.restoreGState()
+        }
+
+        // Rust. This is the one place on the instrument where it belongs: the steel pin of a
+        // hundred-year-old hinge rusts into the brass around it, because that is where water
+        // sits and the lacquer gives up first. Drawn after the knuckle highlights so it stains
+        // them rather than being painted over by them.
+        //
+        // Small on purpose. At a reach of 0.215 card-radii the three blooms merged into a single
+        // orange band across the top of the case, which read as a painted stripe rather than as
+        // corrosion; rust wants to be a stain *on* the metal, not a wash *over* it.
+        let reach = metrics.cardRadius * 0.088
+        let bloom = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: [
+                CompassTheme.rustBloom.withAlphaComponent(0.50 * alpha).cgColor,
+                CompassTheme.rust.withAlphaComponent(0.30 * alpha).cgColor,
+                CompassTheme.rust.withAlphaComponent(0.10 * alpha).cgColor,
+                CompassTheme.rust.withAlphaComponent(0).cgColor,
+            ] as CFArray,
+            locations: [0, 0.30, 0.62, 1]
+        )
+        for (offset, scale) in [(CGFloat(-1), CGFloat(1.0)), (CGFloat(0), CGFloat(1.16)),
+                                (CGFloat(1), CGFloat(0.82))] {
+            let centre = state.camera.project(
+                Point3D(x: metrics.hingeHalfSpan * offset, y: y, z: z)
+            )
+            guard let bloom else { continue }
+            context.saveGState()
+            let r = reach * scale * centre.depthScale
+            // Squashed: it is a stain in the plane of the case top, not a ball.
+            context.translateBy(x: centre.point.x, y: centre.point.y)
+            context.scaleBy(x: 1, y: 0.72)
+            context.drawRadialGradient(
+                bloom, startCenter: .zero, startRadius: 0, endCenter: .zero, endRadius: r,
+                options: []
+            )
             context.restoreGState()
         }
     }
@@ -765,6 +1138,36 @@ extension CompassRenderer {
     /// Foxing and uneven ageing, so no two square inches of the card are the same tone.
     private func drawAgeing(in context: CGContext, state: State, metrics: CompassMetrics) {
         let alpha = CGFloat(state.contentAlpha)
+
+        // Broad mottling first, under the sharp foxing: at a glance this is most of what makes
+        // the card read as old paper rather than as a printed gradient.
+        for blotch in grain.cardUnevenness(radius: metrics.cardRadius) {
+            let point = state.camera.project(Point3D(
+                x: blotch.x * metrics.cardRadius,
+                y: blotch.y * metrics.cardRadius,
+                z: metrics.cardDepth
+            ))
+            let radius = blotch.radius * metrics.cardRadius * point.depthScale
+            let tone = NSColor(calibratedRed: 0.439, green: 0.314, blue: 0.165, alpha: 1)
+            guard let gradient = CGGradient(
+                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: [
+                    tone.withAlphaComponent(blotch.alpha * CompassTheme.wearGain * alpha).cgColor,
+                    tone.withAlphaComponent(0).cgColor,
+                ] as CFArray,
+                locations: [0, 1]
+            ) else { continue }
+            context.saveGState()
+            context.translateBy(x: point.point.x, y: point.point.y)
+            context.drawRadialGradient(
+                gradient,
+                startCenter: .zero, startRadius: 0,
+                endCenter: .zero, endRadius: radius,
+                options: []
+            )
+            context.restoreGState()
+        }
+
         for spot in grain.ageSpots(radius: metrics.cardRadius) {
             let point = state.camera.project(Point3D(
                 x: spot.x * metrics.cardRadius,
@@ -776,7 +1179,7 @@ extension CompassRenderer {
                 colorsSpace: CGColorSpaceCreateDeviceRGB(),
                 colors: [
                     NSColor(calibratedRed: 0.478, green: 0.369, blue: 0.212, alpha: 1)
-                        .withAlphaComponent(spot.alpha * alpha).cgColor,
+                        .withAlphaComponent(spot.alpha * CompassTheme.wearGain * alpha).cgColor,
                     NSColor(calibratedRed: 0.478, green: 0.369, blue: 0.212, alpha: 1).withAlphaComponent(0).cgColor,
                 ] as CFArray,
                 locations: [0, 1]

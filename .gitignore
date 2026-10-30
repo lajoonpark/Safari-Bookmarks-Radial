@@ -6,3 +6,6 @@ build/
 
 # Agent working memory (local notes, not product code)
 .openhands/
+
+# Agent scratch (screenshots, harness captures)
+.agent_tmp/

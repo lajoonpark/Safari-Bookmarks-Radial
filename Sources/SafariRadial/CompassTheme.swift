@@ -12,12 +12,30 @@ import SwiftUI
 /// paper, brass, or the ink that sits on them.
 enum CompassTheme {
 
+    // MARK: - Wear
+
+    /// How strongly the instrument reads as used.
+    ///
+    /// Every wear layer in `CompassGrain` is generated with its own alpha, and those alphas are
+    /// individually tiny — 0.04-0.10 — because they were tuned on a bright new brass ramp where
+    /// anything heavier looked like dirt. Once the ramp was aged down the wear stopped reading
+    /// at all and the compass went back to looking new, which is the one thing the brief rules
+    /// out. Scaling the whole family by one number keeps their relative weights intact and
+    /// leaves a single place to tune. 1.3 is the point where the outer third of the card is
+    /// visibly uneven in tone while no single blot is identifiable as a stain; the web harness
+    /// (`preview/compass-preview.html?age=`) uses the same number, so what is approved there is
+    /// what ships.
+    static let wearGain: CGFloat = 1.3
+
     // MARK: - Paper
 
     /// The card itself. Aged cream, never white: white paper reads as a new print.
     static let paper = NSColor(calibratedRed: 0.863, green: 0.804, blue: 0.667, alpha: 1)
     /// Where the light falls on it.
-    static let paperLit = NSColor(calibratedRed: 0.918, green: 0.867, blue: 0.745, alpha: 1)
+    /// The card's highlight. Pulled down from near-white while ageing the instrument: the old
+    /// value (0.918/0.867/0.745) made the middle of the dial the brightest thing on screen,
+    /// which is what made a century-old card still read as fresh stock.
+    static let paperLit = NSColor(calibratedRed: 0.878, green: 0.820, blue: 0.694, alpha: 1)
     /// Aged, toward the rim.
     static let paperDeep = NSColor(calibratedRed: 0.741, green: 0.659, blue: 0.494, alpha: 1)
     /// The browned edge where card meets brass.
@@ -46,13 +64,32 @@ enum CompassTheme {
     /// Tarnished, not polished. Highlights stay warm rather than white and the shadows go
     /// olive rather than chocolate, which is the difference between "carried for years" and
     /// "polished this morning".
-    static let brassHi = NSColor(calibratedRed: 0.890, green: 0.816, blue: 0.635, alpha: 1)
-    static let brassLit = NSColor(calibratedRed: 0.776, green: 0.643, blue: 0.412, alpha: 1)
-    static let brassMid = NSColor(calibratedRed: 0.604, green: 0.475, blue: 0.275, alpha: 1)
-    static let brassDark = NSColor(calibratedRed: 0.416, green: 0.322, blue: 0.188, alpha: 1)
-    static let brassDeep = NSColor(calibratedRed: 0.224, green: 0.188, blue: 0.118, alpha: 1)
+    /// The brass ramp, aged. A new instrument is a bright yellow-gold with a pale highlight;
+    /// this one has been carried for a century, so the highlight is a warm bone rather than
+    /// white and the two middle stops are pulled down and slightly grey. The *spread* between
+    /// the stops is what still reads as polished metal — flattening it makes the case look like
+    /// painted plastic — so the highlights barely move and the mids do most of the darkening.
+    static let brassHi = NSColor(calibratedRed: 0.835, green: 0.752, blue: 0.560, alpha: 1)
+    static let brassLit = NSColor(calibratedRed: 0.702, green: 0.570, blue: 0.342, alpha: 1)
+    static let brassMid = NSColor(calibratedRed: 0.522, green: 0.398, blue: 0.216, alpha: 1)
+    static let brassDark = NSColor(calibratedRed: 0.352, green: 0.264, blue: 0.145, alpha: 1)
+    static let brassDeep = NSColor(calibratedRed: 0.186, green: 0.152, blue: 0.092, alpha: 1)
     /// The olive-grey bloom of age on brass. Not rust: this is a cool, matte film.
-    static let patina = NSColor(calibratedRed: 0.290, green: 0.282, blue: 0.196, alpha: 1)
+    static let patina = NSColor(calibratedRed: 0.268, green: 0.252, blue: 0.170, alpha: 1)
+
+    /// The warm bloom that tarnish leaves where the lacquer has gone. Distinct from `patina`:
+    /// the film on brass is cool and matte, this is the brown it turns where a hand has been
+    /// resting for decades. Used as a broad, very faint wash, never as a spot.
+    static let tarnishWarm = NSColor(calibratedRed: 0.400, green: 0.286, blue: 0.150, alpha: 1)
+
+    /// Rust, used sparingly and only in seams and around steel pins.
+    ///
+    /// Warm red-brown, well short of orange: at full strength orange on brass reads as paint.
+    /// Kept to a few small spots, because the brief was "old and worn, not damaged" — rust
+    /// spread across a plate looks like neglect, whereas rust in a hinge seam looks like use.
+    static let rust = NSColor(calibratedRed: 0.451, green: 0.231, blue: 0.118, alpha: 1)
+    /// The dark bloom rust leaves in the metal around the spot itself.
+    static let rustBloom = NSColor(calibratedRed: 0.322, green: 0.176, blue: 0.098, alpha: 1)
 
     /// Inside the lid: smoke-stained and darker than the case.
     static let lidRecessInner = NSColor(calibratedRed: 0.427, green: 0.353, blue: 0.220, alpha: 1)
