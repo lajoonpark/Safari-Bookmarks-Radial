@@ -68,7 +68,10 @@ struct DialTabView: View {
                         .transition(.opacity)
                 }
             }
-            .frame(minHeight: 300, alignment: .topLeading)
+            // A fixed height, not a minimum: the intro (three headline lines, a sentence and two
+            // buttons) is taller than the aimed block, and a minimum let it grow into the keys
+            // below. Both blocks now sit in the same box, so nothing moves when you aim.
+            .frame(height: 350, alignment: .topLeading)
             .padding(.top, 18)
 
             HStack(spacing: 14) {
@@ -81,6 +84,7 @@ struct DialTabView: View {
                     .font(Palette.display(15, .regular))
                     .foregroundStyle(Palette.boneFaint)
             }
+            .padding(.top, 34)
 
             pager
                 .padding(.top, 22)
