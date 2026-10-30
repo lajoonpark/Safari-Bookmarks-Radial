@@ -26,6 +26,20 @@ final class RadialMenuView: NSView {
     var onClose: (() -> Void)?
     var onClickOutside: (() -> Void)?
 
+    // MARK: - Embedding
+
+    /// Set when the compass lives inside a window (the manager's Dial tab) rather than on the
+    /// full-screen overlay: no backdrop, no hint row, and it sizes itself to fit its own bounds.
+    var isEmbedded = false
+    /// A non-interactive compass (the Settings preview) draws and tilts to nothing: it ignores
+    /// the pointer entirely.
+    var isInteractive = true
+    /// The radius the user asked for. While embedded `menuRadius` is the fitted result, which can
+    /// be smaller: the setting is an upper bound, as it is on the overlay.
+    var requestedRadius: CGFloat = 200
+    /// Told which slice the pointer is over (nil when it leaves), so a SwiftUI sidebar can follow.
+    var onHoverSlice: ((Int?) -> Void)?
+
     // MARK: - Animation state
 
     private let driver = FrameDriver()
@@ -169,6 +183,38 @@ final class RadialMenuView: NSView {
     override var acceptsFirstResponder: Bool { true }
     override var isOpaque: Bool { false }
 
+    override func layout() {
+        super.layout()
+        fitEmbedded()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        fitEmbedded()
+    }
+
+    /// Sizes the instrument to this view, lid open, and centres it vertically.
+    ///
+    /// The overlay does the same sum against the screen (`RadialController.show`); here the
+    /// bounds are the window's, so the open compass is fitted to them in both directions.
+    func fitEmbedded() {
+        guard isEmbedded, bounds.height > 40, bounds.width > 40 else { return }
+        var fitted = CompassMetrics(cardRadius: requestedRadius).fitted(toHeight: bounds.height - 12)
+        let widthRatio = fitted.caseRadius / fitted.cardRadius
+        let widest = (bounds.width - 16) / 2 / widthRatio
+        if fitted.cardRadius > widest, widest > 40 {
+            fitted = CompassMetrics(cardRadius: widest)
+        }
+        menuRadius = fitted.cardRadius
+        let top = max(0, (bounds.height - fitted.openHeight) / 2)
+        ringCenter = CGPoint(x: bounds.midX, y: top + fitted.lidReach())
+        needsDisplay = true
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        isInteractive ? super.hitTest(point) : nil
+    }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
@@ -273,6 +319,11 @@ final class RadialMenuView: NSView {
     /// The dial opens under the cursor, so whatever slice is there should already be lit
     /// and the needle should already point at it.
     private func primeHoverFromPointer() {
+        // A compass that ignores the pointer starts level, aimed at slot one.
+        guard isInteractive else {
+            needle.snap(to: Double(ringLayout.centerAngle(of: 0)))
+            return
+        }
         let point = convert(window?.mouseLocationOutsideOfEventStream ?? .zero, from: nil)
         let relative = relativePoint(point)
         aimTilt(at: relative, animated: false)
@@ -461,11 +512,14 @@ final class RadialMenuView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        guard isInteractive else { return }
         handlePointer(convert(event.locationInWindow, from: nil))
     }
 
     override func mouseExited(with event: NSEvent) {
+        guard isInteractive else { return }
         if hoveredSlice != nil { endNeedleSettle() }
+        if hoveredSlice != nil { onHoverSlice?(nil) }
         hoveredSlice = nil
         // Off the menu, the disc settles back to level: holding the last lean would leave it
         // tilted toward empty space while the pointer is somewhere else entirely.
@@ -502,6 +556,7 @@ final class RadialMenuView: NSView {
             endNeedleSettle()
             hoveredSlice = newHover
             applyHoverTargets()
+            onHoverSlice?(newHover)
         }
         if let newHover {
             needle.target = Double(ringLayout.centerAngle(of: newHover))
@@ -652,6 +707,11 @@ final class RadialMenuView: NSView {
         context.translateBy(x: -ringOrigin.x, y: -ringOrigin.y)
 
         if bookmarks.isEmpty {
+            if isEmbedded {
+                // Nothing to draw: the window shows its own empty state.
+                context.restoreGState()
+                return
+            }
             drawScrim(in: context, alpha: scrimAlpha)
             // The text stands in for the dial, so it lifts with the box. The backdrop does not.
             context.translateBy(x: 0, y: drop)
@@ -670,7 +730,7 @@ final class RadialMenuView: NSView {
                 showsNumbers: showsNumbers,
                 contentAlpha: content,
                 caseAlpha: caseAlpha,
-                scrimAlpha: scrimAlpha,
+                scrimAlpha: isEmbedded ? 0 : scrimAlpha,
                 presence: presence,
                 dropOffset: drop,
                 sweep: sweepProgress.value,
@@ -686,6 +746,8 @@ final class RadialMenuView: NSView {
         let arrived = Easing.smoothstep(min(1, max(0, (printProgress - 0.5) / 0.5)))
         let furnitureCentre = CGPoint(x: ringOrigin.x, y: ringOrigin.y + CGFloat(1 - arrived) * 6 * scaleFactor)
         let furnitureAlpha = caseAlpha * arrived
+        // The window draws its own pager and key hints around an embedded compass.
+        guard !isEmbedded else { return }
         if paging.pageCount > 1 {
             drawPagePips(in: context, center: furnitureCentre, alpha: furnitureAlpha)
         }

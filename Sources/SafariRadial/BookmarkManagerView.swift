@@ -108,8 +108,7 @@ struct BookmarkManagerView: View {
             DialTabView(
                 model: model,
                 settings: settings,
-                tracker: tracker,
-                onOpenDial: onOpenDial,
+                onEdit: { editing = $0 },
                 onAdd: { withAnimation(Motion.springSoft) { composing = true } }
             )
         case .library:
@@ -121,7 +120,7 @@ struct BookmarkManagerView: View {
                 withAnimation(Motion.springSoft) { router.tab = .dial }
             }
         case .settings:
-            SettingsView(model: settings) {
+            SettingsView(model: settings, previewBookmarks: model.bookmarks) {
                 withAnimation(Motion.springSoft) { router.tab = .importer }
             }
         }

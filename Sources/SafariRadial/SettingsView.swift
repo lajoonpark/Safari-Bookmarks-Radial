@@ -7,6 +7,8 @@ import RadialCore
 /// else already behaves sensibly out of the box.
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
+    /// The dial's contents, so the preview shows your own slots.
+    var previewBookmarks: [Bookmark] = []
     var onOpenImport: () -> Void = {}
 
     @State private var isRecording = false
@@ -57,15 +59,36 @@ struct SettingsView: View {
 
     // MARK: - Preview
 
-    /// Size feedback while you drag. Phase 3 swaps the mini-dial for the live compass.
+    /// The real compass, at 30% scale, so dragging the size slider visibly grows it.
+    ///
+    /// It is laid out at its true size and then scaled down, because the compass fits itself to
+    /// the room it is given: a small frame would clamp every radius to the same size.
     private var preview: some View {
-        let radius = model.preferences.menuRadius
-        let side = 180 + (radius - 140) / 180 * 120
+        let radius = CGFloat(model.preferences.menuRadius)
+        let metrics = CompassMetrics(cardRadius: radius)
+        let width = metrics.caseRadius * 2 + 16
+        let height = metrics.openHeight + 12
+        let scale: CGFloat = 0.3
+        let shown = Array(previewBookmarks.prefix(RadialLayout.maxSlicesPerPage))
         return VStack(spacing: 18) {
-            MiniDial()
-                .frame(width: CGFloat(side), height: CGFloat(side))
-                .shadow(color: Color.black.opacity(0.5), radius: 18, y: 12)
-                .motion(Motion.springSoft, value: Int(radius))
+            Group {
+                if shown.isEmpty {
+                    MiniDial()
+                        .frame(width: 220, height: 220)
+                } else {
+                    LiveCompass(
+                        bookmarks: shown,
+                        page: 0,
+                        paging: RadialPaging(total: shown.count),
+                        showsNumbers: model.preferences.showNumbers,
+                        radius: radius,
+                        interactive: false
+                    )
+                    .frame(width: width, height: height)
+                    .scaleEffect(scale)
+                    .frame(width: width * scale, height: height * scale)
+                }
+            }
             Text("LIVE PREVIEW")
                 .font(Palette.mono(11, .semibold))
                 .tracking(1.8)
@@ -160,17 +183,7 @@ struct SettingsView: View {
                     .font(Palette.display(17, .regular))
                     .foregroundStyle(Palette.bone)
                 Spacer(minLength: 12)
-                Picker("", selection: Binding(
-                    get: { model.preferences.browserBundleID },
-                    set: { bundleID in model.setBrowser(Browser.browser(forBundleID: bundleID)) }
-                )) {
-                    ForEach(model.installedBrowsers) { browser in
-                        Text(browser.name).tag(browser.bundleID)
-                    }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .fixedSize()
+                browserMenu
             }
 
             BrassSegmented(
@@ -201,6 +214,42 @@ struct SettingsView: View {
                 action: model.setBackground
             )
         }
+    }
+
+    /// The stock macOS pop-up is blue and out of place here, so the menu is drawn as a brass-edged
+    /// field. The choices themselves are still a native menu.
+    private var browserMenu: some View {
+        Menu {
+            ForEach(model.installedBrowsers) { browser in
+                Button {
+                    model.setBrowser(browser)
+                } label: {
+                    if browser.bundleID == model.preferences.browserBundleID {
+                        Label(browser.name, systemImage: "checkmark")
+                    } else {
+                        Text(browser.name)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Text(model.preferences.browser.name)
+                    .font(Palette.display(15, .medium))
+                    .foregroundStyle(Palette.bone)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Palette.boneDim)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 38)
+            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Palette.void))
+            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Palette.rim, lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .liftOnHover(1.5)
     }
 
     /// One sentence describing exactly what will happen, naming the browser.
