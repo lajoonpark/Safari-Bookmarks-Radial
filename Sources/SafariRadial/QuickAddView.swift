@@ -81,7 +81,7 @@ struct QuickAddView: View {
                         .foregroundStyle(Palette.bone)
                         .focused($focus, equals: .link)
                         .onSubmit(commit)
-                        .onChange(of: url) { _ in
+                        .onChange(of: url) { _, _ in
                             if error != nil { error = nil }
                         }
                 }
