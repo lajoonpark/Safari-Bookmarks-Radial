@@ -100,13 +100,16 @@ final class FrameDriver {
 
     private var timer: Timer?
     private var tick: ((Double) -> Void)?
+    /// When the previous tick ran. Held here rather than in the closure so the timer body never
+    /// mutates a captured variable, which Swift 6 rejects as concurrent access.
+    private var lastTick: Double = 0
 
     var isRunning: Bool { timer != nil }
 
     func start(_ onTick: @escaping (Double) -> Void) {
         tick = onTick
         guard timer == nil else { return }
-        var last = CACurrentMediaTime()
+        lastTick = CACurrentMediaTime()
         let timer = Timer(timeInterval: 1.0 / 120.0, repeats: true) { [weak self] _ in
             guard let self, let tick = self.tick else { return }
             // Real elapsed time, not the nominal interval. Summoning the menu activates the
@@ -116,8 +119,8 @@ final class FrameDriver {
             // motion stops, and only then does the lid swing. Measuring the clock instead lets
             // the animation resume exactly where wall-clock time says it should be.
             let now = CACurrentMediaTime()
-            let dt = min(FrameDriver.maximumStep, max(0, now - last))
-            last = now
+            let dt = min(FrameDriver.maximumStep, max(0, now - self.lastTick))
+            self.lastTick = now
             tick(dt)
         }
         // .common keeps animation alive while a menu or resize is tracking.
