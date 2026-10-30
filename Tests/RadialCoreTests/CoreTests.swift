@@ -1094,40 +1094,78 @@ final class CompassLidTests: XCTestCase {
         XCTAssertEqual(swung.z - quarter.hingeZ, 2 * metrics.lidRadius, accuracy: 0.5)
     }
 
-    /// The lid must not lag the case.
+    /// The lid must not lag the case, whether it is opening or closing.
     ///
     /// This is the shape of the "⌘E appears, pauses, then flips the lid" complaint. The lid's
     /// spring used to settle in ~410ms against the case's ~110ms, so the box landed, sat still,
     /// and only then did the lid swing. Geometry alone cannot catch that: both poses are valid,
     /// it is the *timing* that reads as a stutter. Simulating the two springs here pins the
     /// relationship instead of the absolute numbers, so tuning either one stays legal as long as
-    /// the lid does not fall behind again.
+    /// the lid does not fall behind again. Closing runs the other way round: the lid has to be
+    /// shut before the box is gone, or the case vanishes with the lid still in the air.
     func testLidDoesNotFallBehindTheCaseItSitsIn() {
-        /// Time to cover 98% of the travel — i.e. time to *look* open. Measuring the point at
-        /// which the spring is mathematically at rest was useless here: every spring spends
-        /// most of its life in the last few percent, so all of them came out at the same
-        /// half-second and the assertion could not tell a good tuning from a bad one.
-        func timeToOpen(_ stiffness: Double, _ damping: Double, kick: Double = 0) -> Double {
-            var value = 0.0, speed = kick, time = 0.0
+        /// Time to cross `threshold` on the way from `start` to `target`. The threshold, not the
+        /// point of rest: every spring spends most of its life in the last few percent of its
+        /// travel, so measuring rest made all of them come out at the same half-second and the
+        /// assertion could not tell a good tuning from a bad one. Opening is measured at 98%,
+        /// which is the time to *look* open.
+        func timeTo(_ threshold: Double, from start: Double = 0, target: Double = 1,
+                    stiffness: Double, damping: Double, kick: Double = 0) -> Double {
+            var value = start, speed = kick, time = 0.0
             let dt = 1.0 / 120
+            let rising = target > start
             while time < 2 {
-                speed += (stiffness * (1 - value) - damping * speed) * dt
+                speed += (stiffness * (target - value) - damping * speed) * dt
                 value += speed * dt
                 time += dt
-                if value >= 0.98 { return time }
+                let reached = rising ? value >= threshold : value <= threshold
+                if reached { return time }
             }
             return time
         }
-        let caseOpen = timeToOpen(420, 27, kick: 4.6)
-        let lidOpen = timeToOpen(700, 38, kick: 14)
+        let caseOpen = timeTo(0.98, stiffness: 300, damping: 30, kick: 6)
+        let lidOpen = timeTo(0.98, stiffness: 260, damping: 24, kick: 6)
         XCTAssertLessThan(lidOpen, caseOpen,
                           "the lid must land before the case finishes moving, not long after it")
-        // And it has to be genuinely quick. This used to allow a quarter of a second, which the
-        // first pass spent entirely on the case: the whole gesture read as two beats because
-        // the box slid into place and only then did anything else happen. One gesture is
-        // ~150ms at most, so both ends of it have to land inside that.
-        XCTAssertLessThan(lidOpen, 0.13)
-        XCTAssertLessThan(caseOpen, 0.18)
+        // And it has to be genuinely quick, but not rushed. This used to allow a quarter of a
+        // second, which the first pass spent entirely on the case: the whole gesture read as two
+        // beats because the box slid into place and only then did anything else happen. The lid
+        // now reaches 98% at ~180ms and the case at ~240ms, so both ends sit inside one beat. (The
+        // app's springs sub-step at 240Hz; this loop steps at 120Hz and reads about 10ms later.)
+        // The lower bound keeps the lid from being tuned back into a flick.
+        XCTAssertGreaterThan(lidOpen, 0.15)
+        XCTAssertLessThan(lidOpen, 0.22)
+        XCTAssertLessThan(caseOpen, 0.28)
+        // The card only opens once the lid has cleared it at 0.55, and by then the box should be at
+        // least half risen, so a click cannot land on a slice the user has not seen come up. Both
+        // springs are stepped together here, so the two readings are taken at the same instant.
+        let frame = 1.0 / 120
+        var box = (value: 0.0, speed: 6.0)
+        var lidState = (value: 0.0, speed: 6.0)
+        var time = 0.0
+        var cleared: (time: Double, box: Double)?
+        while cleared == nil, time < 2 {
+            box.speed += (300 * (1 - box.value) - 30 * box.speed) * frame
+            box.value += box.speed * frame
+            lidState.speed += (260 * (1 - lidState.value) - 24 * lidState.speed) * frame
+            lidState.value += lidState.speed * frame
+            time += frame
+            if CompassLid(metrics: metrics, openness: CGFloat(lidState.value)).revealsCard {
+                cleared = (time, box.value)
+            }
+        }
+        guard let reached = cleared else {
+            XCTFail("the lid never clears the card")
+            return
+        }
+        XCTAssertGreaterThanOrEqual(reached.time, 0.06, "the lid should not clear the card before about 60ms")
+        XCTAssertLessThanOrEqual(reached.time, 0.10, "the lid should clear the card by about 100ms")
+        XCTAssertGreaterThanOrEqual(reached.box, 0.5, "the box should be at least half risen when the card opens")
+        // Closing has no kick: the lid must be shut (2% of travel) before the box is gone (zero).
+        let lidShut = timeTo(0.02, from: 1, target: -0.08, stiffness: 520, damping: 40)
+        let caseGone = timeTo(0, from: 1, target: -0.06, stiffness: 380, damping: 34)
+        XCTAssertLessThan(lidShut, caseGone,
+                          "the lid must be shut before the box is gone")
     }
 
     func testOpennessIsClampedToTheAnglesWeSupport() {

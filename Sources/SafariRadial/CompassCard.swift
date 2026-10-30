@@ -237,7 +237,7 @@ extension CompassRenderer {
         context.saveGState()
         context.translateBy(x: 1.1, y: 1.5)
         fill([tipPoint, leftPoint, backPoint, rightPoint], context,
-             NSColor.black.withAlphaComponent(0.30 * state.contentAlpha))
+             NSColor.black.withAlphaComponent(0.30))
         context.restoreGState()
 
         let path = CGMutablePath()
@@ -278,6 +278,9 @@ extension CompassRenderer {
         let layout = layout(for: state)
         let alpha = CGFloat(state.contentAlpha)
         let pageShift = CGFloat((1 - Easing.outCubic(min(1, max(0, state.pageAlpha)))) * 9)
+        // Where the sweep's leading edge is, as a fraction of a turn clockwise from 12 o'clock. It is
+        // the same easing `drawSweep` uses, so each label lights as the edge reaches its bearing.
+        let edge = Easing.outQuint(min(1, max(0, state.sweep)))
 
         for index in 0..<max(1, state.slices.count) {
             guard let bookmark = state.slices[safe: index] else { continue }
@@ -288,6 +291,13 @@ extension CompassRenderer {
             let anchor = state.camera.project(x: point.x, y: point.y, z: metrics.cardDepth)
             let scale = inkScale(at: point, state)
 
+            // The labels come in clockwise with the sweep. The reveal is measured against the edge scaled
+            // by 1.22, so the last slot (a bearing under one turn) is fully inked before the sweep settles,
+            // and slot 1 (bearing 0) starts dark. A hovered label is never dimmed by that.
+            let bearing = Double(RadialLayout.normalize(angle)) / (2 * .pi)
+            let revealed = Easing.smoothstep(min(1, max(0, (1.22 * edge - bearing) / 0.22)))
+            let labelAlpha = alpha * CGFloat(max(Double(hover), revealed))
+
             // Ask the *same* layout the hit test uses how wide a box fits inside this wedge.
             let boxHeight: CGFloat = bookmark.subtitle.isEmpty ? 20 : 34
             let limit = layout.labelWidthLimit(for: index, radius: radius, height: boxHeight, pad: 7)
@@ -297,7 +307,7 @@ extension CompassRenderer {
                 bookmark.displayTitle,
                 maxWidth: maxWidth,
                 hover: hover,
-                alpha: alpha,
+                alpha: labelAlpha,
                 metrics: metrics
             )
 
@@ -326,7 +336,7 @@ extension CompassRenderer {
                 let subtitle = NSAttributedString(string: bookmark.subtitle, attributes: [
                     .font: CompassTheme.serif(max(6, metrics.cardRadius * 0.040)),
                     .foregroundColor: CompassTheme.inkSubtle
-                        .withAlphaComponent((0.90 + 0.10 * Double(hover)) * Double(alpha)),
+                        .withAlphaComponent((0.90 + 0.10 * Double(hover)) * Double(labelAlpha)),
                 ])
                 let subBox = CGRect(
                     x: anchor.x - maxWidth / 2,
@@ -377,7 +387,6 @@ extension CompassRenderer {
     func drawHub(in context: CGContext, state: State, metrics: CompassMetrics) {
         let radius = metrics.hubRadius
         let hover = min(1, max(0, state.hubHover))
-        let alpha = CGFloat(state.contentAlpha)
         let boss = CGMutablePath()
         boss.addLines(between: circle(radius, state))
         boss.closeSubpath()
@@ -409,7 +418,7 @@ extension CompassRenderer {
 
         context.saveGState()
         context.addPath(boss)
-        context.setStrokeColor(NSColor.black.withAlphaComponent(0.55 * alpha).cgColor)
+        context.setStrokeColor(NSColor.black.withAlphaComponent(0.55).cgColor)
         context.setLineWidth(1)
         context.strokePath()
         context.restoreGState()
@@ -420,10 +429,10 @@ extension CompassRenderer {
         window.closeSubpath()
         context.saveGState()
         context.addPath(window)
-        context.setFillColor(CompassTheme.hubWindow.withAlphaComponent(alpha).cgColor)
+        context.setFillColor(CompassTheme.hubWindow.cgColor)
         context.fillPath()
         context.addPath(window)
-        context.setStrokeColor(NSColor.white.withAlphaComponent((0.10 + 0.20 * Double(hover)) * Double(alpha)).cgColor)
+        context.setStrokeColor(NSColor.white.withAlphaComponent(0.10 + 0.20 * Double(hover)).cgColor)
         context.setLineWidth(1)
         context.strokePath()
         context.restoreGState()
@@ -435,7 +444,7 @@ extension CompassRenderer {
             at: .zero,
             scale: 1,
             font: CompassTheme.serif(radius * 0.62, .semibold),
-            colour: CompassTheme.hubWindowInk.withAlphaComponent(alpha),
+            colour: CompassTheme.hubWindowInk,
             in: context
         )
 
@@ -444,7 +453,7 @@ extension CompassRenderer {
             let arm = radius * 0.30
             context.saveGState()
             context.rotate(by: hover * .pi / 4)
-            context.setStrokeColor(CompassTheme.hubWindowInk.withAlphaComponent(0.92 * Double(hover) * alpha).cgColor)
+            context.setStrokeColor(CompassTheme.hubWindowInk.withAlphaComponent(0.92 * Double(hover)).cgColor)
             context.setLineWidth(max(1.5, radius * 0.055))
             context.setLineCap(.round)
             context.move(to: CGPoint(x: -arm, y: -arm))
@@ -464,7 +473,9 @@ extension CompassRenderer {
         let progress = state.sweep
         guard progress > 0.002, progress < 0.998 else { return }
         let eased = Easing.outQuint(min(1, progress))
-        let start = -CGFloat.pi / 2
+        // Slot 1 sits at 12 o'clock (`RadialLayout.centerAngle(of: 0)` is 0), so the sweep starts there
+        // and runs clockwise, the same way the slots are numbered.
+        let start: CGFloat = 0
         let end = start + 2 * .pi * CGFloat(eased)
         let radius = metrics.numeralRadius
         let fade = CGFloat(1 - Easing.outCubic(min(1, progress)))

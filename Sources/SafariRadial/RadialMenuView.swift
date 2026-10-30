@@ -29,7 +29,9 @@ final class RadialMenuView: NSView {
     // MARK: - Animation state
 
     private let driver = FrameDriver()
-    private var openProgress = SpringValue(0, stiffness: 420, damping: 27)
+    /// How far the box has risen: 0 when hidden, 1 when fully open. Closing aims a little below
+    /// zero (see `dismiss`), so the spring crosses zero decisively instead of trailing off.
+    private var openProgress = SpringValue(0, stiffness: 300, damping: 30)
     /// The compass sweep that plays once as the dial appears.
     private var sweepProgress = SpringValue(0, stiffness: 300, damping: 34)
     private var sliceHover: [SpringValue] = []
@@ -45,20 +47,33 @@ final class RadialMenuView: NSView {
     private var tiltRoll = SpringValue(0, stiffness: 170, damping: 26)
     /// How far the lid has swung.
     ///
-    /// Stiff enough that the lid is half open in ~38ms and settled in ~100ms: it has to read as
-    /// one flick of a sprung lid, not as an animation you watch. Still damped near critical, so
-    /// it lands with a small settle rather than a wobble.
+    /// The lid leads the opening and lands before the box does: it clears the card (0.55 open)
+    /// by ~75ms and has reached 98% by ~180ms, while the box reaches 98% by ~240ms. It is
+    /// lightly underdamped, so it overshoots by about 3%, but `CompassLid` clamps that overshoot
+    /// and the lid lands on its stop and holds. The spring itself is within 1% of rest by ~370ms.
     ///
-    /// Much quicker than the original tuning (210/27), which took 108ms just to reach halfway
-    /// and 358ms to settle, while the case was done in ~110ms. That mismatch was the "appears,
-    /// then pauses, then flips" the opening used to have: by the time the box had landed, the
-    /// lid had barely moved. The kick in `present()` puts it under way on the very first frame,
-    /// so there is no dead time before anything is visible.
-    private var lidOpen = SpringValue(0, stiffness: 700, damping: 38)
+    /// That order is what keeps the opening from reading as "appears, then pauses, then flips":
+    /// the lid is never behind the box. The kick in `present()` puts it under way on the very
+    /// first frame, so there is no dead time before anything is visible.
+    ///
+    /// These are the opening constants. `present()` restores them, and `dismiss(animated:)`
+    /// swaps in the closing ones, which shut the lid by ~150ms, before the box is gone at ~200ms.
+    private var lidOpen = SpringValue(0, stiffness: 260, damping: 24)
     /// Set once the sweep has been released, so the opening beat only ever plays one time.
     private var sweepStarted = false
+    /// The needle is held counter-clockwise of its aim until the card is reachable, so it swings onto
+    /// the aim as the card is revealed. Only its value is held: the target is always the real aim.
+    private var needleParked = false
+    /// Set while the needle is on its underdamped release spring, until it settles or the pointer
+    /// moves to another slice.
+    private var needleSettling = false
+    /// How far counter-clockwise the needle is held while parked.
+    private static let needleParkOffset: Double = 0.5
     /// Fired when a closing motion actually finishes, instead of after a guessed delay.
     private var closeCompletion: (() -> Void)?
+    /// Where the hub was on the last `present()`. A summon that lands on the same spot while the box
+    /// is still up is a reversal rather than a fresh open.
+    private var lastPresentedRingCenter: CGPoint?
 
     private let renderer = CompassRenderer()
 
@@ -91,10 +106,22 @@ final class RadialMenuView: NSView {
         )
     }
 
-    /// The live tilt, from the two springs.
+    /// How far the box has risen, clamped to 0...1. Closing aims below zero and opening overshoots
+    /// past one, so the clamp keeps the set-down terms inside their ranges.
+    private var presence: Double { min(1, max(0, openProgress.value)) }
+
+    /// How far the instrument leans back while the box is still rising: about 8°, gone once open.
+    private static let setDownTipBack: Double = 0.14
+    /// The steepest lean allowed in total, tip-back included. Past about 20° the far wedges
+    /// foreshorten into slivers (see `RadialTilt`).
+    private static let maxTotalPitch: CGFloat = 20 * .pi / 180
+
+    /// The live tilt: the two springs, plus the set-down tip-back. The tip-back lives here rather
+    /// than in the springs, so the renderer and every unprojection read the same lean.
     private var tilt: RadialTilt {
-        RadialTilt(
-            pitch: CGFloat(tiltPitch.value),
+        let pitch = CGFloat(tiltPitch.value + (1 - presence) * RadialMenuView.setDownTipBack)
+        return RadialTilt(
+            pitch: min(RadialMenuView.maxTotalPitch, max(-RadialMenuView.maxTotalPitch, pitch)),
             roll: CGFloat(tiltRoll.value),
             eyeDistance: menuRadius * RadialTilt.eyeDistanceRatio
         )
@@ -109,9 +136,10 @@ final class RadialMenuView: NSView {
 
     /// Whether the pointer may act on the card yet.
     ///
-    /// The lid starts shut and takes ~300ms to clear. Without this gate a fast summon followed
-    /// by an immediate click would fire whatever slice happened to be under the cursor while
-    /// the box was still opening — the one failure mode a menu like this cannot have.
+    /// The lid starts shut and clears the card (0.55 open) about 75ms after `present()`. Without
+    /// this gate a fast summon followed by an immediate click would fire whatever slice happened
+    /// to be under the cursor while the box was still opening — the one failure mode a menu like
+    /// this cannot have.
     private var cardIsReachable: Bool { lid.revealsCard }
 
     /// Sets the tilt the pointer asks for, and lets the springs do the rest.
@@ -163,16 +191,49 @@ final class RadialMenuView: NSView {
         needsDisplay = true
     }
 
+    /// Whether the hub is where the last presentation put it, to within half a point. A summon
+    /// anywhere else (the pointer moved, or the screen changed) is a fresh open, not a reversal.
+    private var ringCenterIsUnchanged: Bool {
+        guard let previous = lastPresentedRingCenter, let current = ringCenter else { return false }
+        return abs(previous.x - current.x) <= 0.5 && abs(previous.y - current.y) <= 0.5
+    }
+
     func present() {
+        // Summoned again while the box is still up (closing, or not yet fully down) at the same spot:
+        // that is a reversal, and the springs carry on from where they are.
+        let reversing = (isClosing || openProgress.value > 0.02) && ringCenterIsUnchanged
+        lastPresentedRingCenter = ringCenter
+        // Either way the pending close is abandoned. Its completion must not fire and tear down the
+        // menu that is now being shown.
         isClosing = false
+        closeCompletion = nil
+        // Opening tuning. `dismiss(animated:)` swaps in the closing constants, so they are set
+        // again here every time.
+        openProgress.stiffness = 300
+        openProgress.damping = 30
+        lidOpen.stiffness = 260
+        lidOpen.damping = 24
+
+        if reversing {
+            // Nothing is snapped or kicked. A sweep that finished stays finished, a sweep that had not
+            // started starts through its usual gate, and the needle keeps the state it is in.
+            openProgress.target = 1
+            lidOpen.target = 1
+            beginAnimating()
+            return
+        }
+
         openProgress.snap(to: 0)
         sweepProgress.snap(to: 0)
         lidOpen.snap(to: 0)
         sweepStarted = false
+        needle.stiffness = 300
+        needle.damping = 26
+        needleSettling = false
         // Everything moves from this instant. There used to be a 0.28s timer here that held the
         // print back until the lid had cleared; because the lid spring also started from rest,
         // the visible result was the box appearing, pausing, and *then* opening. The card is
-        // now revealed by the lid's own angle (`printAlpha`), so the two cannot desynchronise
+        // now revealed by the lid's own angle (`printProgress`), so the two cannot desynchronise
         // and there is nothing to wait for.
         openProgress.target = 1
         lidOpen.target = 1
@@ -181,10 +242,16 @@ final class RadialMenuView: NSView {
         // nothing for the first ~40° of its swing, those frames look like the box appearing and
         // then pausing before anything flips. Launching the lid already moving makes the box
         // and the lid leave together, in one gesture.
-        openProgress.kick(velocity: 4.6)
-        lidOpen.kick(velocity: 14)
+        openProgress.kick(velocity: 6)
+        lidOpen.kick(velocity: 6)
         needle.snap(to: Double(ringLayout.centerAngle(of: 0)))
         primeHoverFromPointer()
+        // Park the needle under the lid. The aim (the target) is kept, and only the value is moved
+        // back, so nothing has to re-aim it when the card is revealed.
+        let aim = needle.target
+        needle.snap(to: aim - RadialMenuView.needleParkOffset)
+        needle.target = aim
+        needleParked = true
         beginAnimating()
     }
 
@@ -235,11 +302,21 @@ final class RadialMenuView: NSView {
         hoveredSlice = nil
         pressedSlice = nil
         pressedHub = false
+        // A press that began before the close must not resolve as an outside click on a menu that was
+        // summoned again while the close was still running.
+        pressStartedOutside = false
         closeCompletion = completion
         releasePressSprings()
         if animated {
-            openProgress.target = 0
-            lidOpen.target = 0
+            // Closing has no kick and is quicker than opening. The lid shuts first, and the box
+            // sinks through zero after it. Both targets sit below rest, so each spring crosses its
+            // threshold decisively instead of easing into it.
+            openProgress.stiffness = 380
+            openProgress.damping = 34
+            lidOpen.stiffness = 520
+            lidOpen.damping = 40
+            openProgress.target = -0.06
+            lidOpen.target = -0.08
             beginAnimating()
         } else {
             openProgress.snap(to: 0)
@@ -294,7 +371,8 @@ final class RadialMenuView: NSView {
         hubHover.step(dt)
         hubPress.step(dt)
         pageSwap.step(dt)
-        needle.step(dt)
+        // A parked needle holds its value until the card is reachable.
+        if !needleParked { needle.step(dt) }
         tiltPitch.step(dt)
         tiltRoll.step(dt)
         lidOpen.step(dt)
@@ -307,8 +385,23 @@ final class RadialMenuView: NSView {
             sweepProgress.target = 1
         }
 
+        // The needle is released the first frame the card is reachable, on a lightly underdamped
+        // spring (zeta about 0.5): it overshoots its aim by about 15%, roughly 4 degrees, and settles.
+        if needleParked, cardIsReachable {
+            needleParked = false
+            needleSettling = true
+            needle.stiffness = 220
+            needle.damping = 15
+        }
+        if needleSettling, !needle.isAnimating {
+            endNeedleSettle()
+        }
+
+        // A parked needle is not moving on its own: the lid is what it is waiting for, and that
+        // keeps the driver running.
         if openProgress.isAnimating || sweepProgress.isAnimating
-            || hubHover.isAnimating || hubPress.isAnimating || pageSwap.isAnimating || needle.isAnimating
+            || hubHover.isAnimating || hubPress.isAnimating || pageSwap.isAnimating
+            || (needle.isAnimating && !needleParked)
             || tiltPitch.isAnimating || tiltRoll.isAnimating || lidOpen.isAnimating {
             moving = true
         }
@@ -321,21 +414,33 @@ final class RadialMenuView: NSView {
 
         needsDisplay = true
 
-        // A closing menu is finished once the compass is too small to see, not once every
-        // spring has run out of its asymptote. Waiting for `isAnimating` held the panel on
-        // screen for ~600ms after the lid had already shut, because a spring spends most of
-        // its life in the last few percent of its travel. At 0.02 the box is a third of a
-        // degree wide and the paint below it is fully transparent.
-        let closedEnough = isClosing && openProgress.value <= 0.02
+        // A closing menu is finished once the box has sunk below zero, not once every spring has
+        // run out of its asymptote. Waiting for `isAnimating` held the panel on screen long after
+        // the lid had shut, because a spring spends most of its life in the last few percent of
+        // its travel. The close target sits just under zero (see `dismiss`), so the box crosses
+        // zero at a useful speed, and at zero there is nothing left to paint.
+        let closedEnough = isClosing && openProgress.value <= 0
         if !moving || closedEnough {
             driver.stop()
             if isClosing {
+                // Park both springs at rest, so the ticker has nothing in flight and a later
+                // wake-up cannot carry them on toward their below-zero targets.
+                openProgress.snap(to: 0)
+                lidOpen.snap(to: 0)
                 isClosing = false
                 let completion = closeCompletion
                 closeCompletion = nil
                 completion?()
             }
         }
+    }
+
+    /// Hands the needle back to its normal spring, once it has settled or the pointer has moved on.
+    private func endNeedleSettle() {
+        guard needleSettling else { return }
+        needleSettling = false
+        needle.stiffness = 300
+        needle.damping = 26
     }
 
     // MARK: - Pointer handling
@@ -357,6 +462,7 @@ final class RadialMenuView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
+        if hoveredSlice != nil { endNeedleSettle() }
         hoveredSlice = nil
         // Off the menu, the disc settles back to level: holding the last lean would leave it
         // tilted toward empty space while the pointer is somewhere else entirely.
@@ -366,17 +472,18 @@ final class RadialMenuView: NSView {
     }
 
     private func handlePointer(_ point: CGPoint) {
+        // A closing compass takes no pointer input, so a slice cannot light up on its way out.
+        guard !isClosing else { return }
         // Nothing on the card may react while the lid is still over it.
         guard cardIsReachable else {
             hoveredSlice = nil
             applyHoverTargets()
             return
         }
-        let onScreen = relativePoint(point)
-        // The pointer arrives in screen space, but the dial is drawn tilted. Unproject it
-        // before hit testing, or the slice you click is not the slice under the cursor —
-        // which gets worse the further from the centre you aim.
-        let relative = tilt.unproject(onScreen)
+        // The pointer arrives in screen space, but the dial is drawn tilted and set down. Undo both
+        // before hit testing, or the slice you click is not the slice under the cursor — which gets
+        // worse the further from the centre you aim.
+        let relative = cardPoint(point)
         aimTilt(at: relative, animated: true)
         let hit = ringLayout.hitTest(relative)
 
@@ -389,6 +496,7 @@ final class RadialMenuView: NSView {
         }
 
         if newHover != hoveredSlice {
+            endNeedleSettle()
             hoveredSlice = newHover
             applyHoverTargets()
         }
@@ -415,7 +523,9 @@ final class RadialMenuView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        let relative = tilt.unproject(relativePoint(convert(event.locationInWindow, from: nil)))
+        // A closing compass takes no presses: nothing on it may fire or dismiss on its way out.
+        guard !isClosing else { return }
+        let relative = cardPoint(convert(event.locationInWindow, from: nil))
         // While the lid is still moving, a press can only dismiss: it may not fire a slice the
         // user has not seen yet. Escape is not the only way out of the opening beat.
         guard cardIsReachable else {
@@ -440,7 +550,7 @@ final class RadialMenuView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        let relative = tilt.unproject(relativePoint(convert(event.locationInWindow, from: nil)))
+        let relative = cardPoint(convert(event.locationInWindow, from: nil))
         guard cardIsReachable else {
             let escaped = pressStartedOutside && ringLayout.hitTest(relative) == .none
             pressStartedOutside = false
@@ -487,6 +597,16 @@ final class RadialMenuView: NSView {
         return CGPoint(x: point.x - origin.x, y: point.y - origin.y)
     }
 
+    /// The set-down scale `draw` applies about the hub.
+    private var setDownScale: CGFloat { 0.965 + 0.035 * CGFloat(presence) }
+    /// Screen-space lift; negative is up (the view is flipped).
+    private var setDownLift: CGFloat { -CGFloat(1 - presence) * 10 * scaleFactor }
+    /// A view point in card space: undo the set-down lift and scale, then the tilt.
+    private func cardPoint(_ point: CGPoint) -> CGPoint {
+        let r = relativePoint(point)
+        return tilt.unproject(CGPoint(x: r.x / setDownScale, y: (r.y - setDownLift) / setDownScale))
+    }
+
     private func fire(_ index: Int) {
         guard index < bookmarks.count else { return }
         onActivate?(bookmarks[index])
@@ -507,19 +627,31 @@ final class RadialMenuView: NSView {
         let open = openProgress.value
         guard open > 0.001 else { return }
 
-        let appear = Easing.outCubic(min(1, max(0, open)))
         let content = Easing.outCubic(printProgress)
+        // The case and the scrim follow the box's own spring, not the lid or the print. The case is
+        // solid once the box is half open. The spring already eases, so the scrim follows it directly:
+        // an outCubic on top ran well ahead of it, putting the backdrop at about 14% on the first frame.
+        let caseAlpha = Easing.smoothstep(min(1, presence / 0.5))
+        let scrimAlpha = presence
 
-        // The compass is a solid object, so it enters by tipping back rather than by scaling:
-        // a scale from nothing looks like a sticker being placed, and a real lid has weight.
+        // The compass is set down in the palm rather than placed: it opens a touch smaller, higher and
+        // tipped back (the tip-back is in `tilt`), then lands. All three are neutral once it is open.
+        // The scale covers the scrim as well as the case, but the drop does not: the drop is applied
+        // after the scrim, so the backdrop stays where it is while the instrument lands.
+        let scale = setDownScale
+        // The view is flipped, so +y runs down the screen and a negative offset lifts the case. The
+        // drop is applied inside the scale, so it is divided by it to land at the same place on screen.
+        let drop = setDownLift / scale
+
         context.saveGState()
         context.translateBy(x: ringOrigin.x, y: ringOrigin.y)
-        let scale = 0.94 + 0.06 * CGFloat(appear)
         context.scaleBy(x: scale, y: scale)
         context.translateBy(x: -ringOrigin.x, y: -ringOrigin.y)
 
         if bookmarks.isEmpty {
-            drawScrim(in: context, alpha: content)
+            drawScrim(in: context, alpha: scrimAlpha)
+            // The text stands in for the dial, so it lifts with the box. The backdrop does not.
+            context.translateBy(x: 0, y: drop)
             drawEmptyState(alpha: content)
         } else {
             let state = CompassRenderer.State(
@@ -534,6 +666,10 @@ final class RadialMenuView: NSView {
                 needleAngle: CGFloat(needle.value),
                 showsNumbers: showsNumbers,
                 contentAlpha: content,
+                caseAlpha: caseAlpha,
+                scrimAlpha: scrimAlpha,
+                presence: presence,
+                dropOffset: drop,
                 sweep: sweepProgress.value,
                 pageAlpha: pageSwap.value
             )
@@ -542,10 +678,15 @@ final class RadialMenuView: NSView {
 
         context.restoreGState()
 
+        // The furniture comes in last: it waits for the print to be half resolved, then rises into
+        // place. The view is flipped, so +y is down the screen, and the rise starts 6pt (scaled) lower.
+        let arrived = Easing.smoothstep(min(1, max(0, (printProgress - 0.5) / 0.5)))
+        let furnitureCentre = CGPoint(x: ringOrigin.x, y: ringOrigin.y + CGFloat(1 - arrived) * 6 * scaleFactor)
+        let furnitureAlpha = caseAlpha * arrived
         if paging.pageCount > 1 {
-            drawPagePips(in: context, center: ringOrigin, alpha: content)
+            drawPagePips(in: context, center: furnitureCentre, alpha: furnitureAlpha)
         }
-        drawHints(in: context, center: ringOrigin, alpha: content)
+        drawHints(in: context, center: furnitureCentre, alpha: furnitureAlpha)
     }
 
     private func drawScrim(in context: CGContext, alpha: Double) {

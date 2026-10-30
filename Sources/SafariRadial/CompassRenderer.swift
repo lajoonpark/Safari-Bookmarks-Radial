@@ -24,7 +24,18 @@ final class CompassRenderer {
         var hubHover: CGFloat
         var needleAngle: CGFloat
         var showsNumbers: Bool
+        /// The print and what lights it: labels, card printing, the slice wash and the sweep.
         var contentAlpha: Double
+        /// The case and everything in it. Applied once, to a transparency layer around the case.
+        var caseAlpha: Double
+        /// The scrim behind the instrument. It sits outside that layer.
+        var scrimAlpha: Double
+        /// How far the box has risen, 0 to 1. The contact shadow is wider while the instrument is still
+        /// coming down and tightens to its settled size as it lands.
+        var presence: Double = 1
+        /// How far the box is still set down, in the units this context is drawn in (the caller has
+        /// already applied the set-down scale). Applied after the scrim, so the backdrop does not move.
+        var dropOffset: CGFloat = 0
         var sweep: Double
         var pageAlpha: Double
     }
@@ -37,7 +48,20 @@ final class CompassRenderer {
         context.saveGState()
         context.translateBy(x: centre.x, y: centre.y)
 
+        // The scrim is the backdrop the instrument fades into, so it stays outside the layer.
         drawScrim(in: context, state: state)
+        // The set-down drop comes after the scrim, so the backdrop stays where it is while the
+        // instrument lands. Everything below moves with it, the layer's bounds included.
+        context.translateBy(x: 0, y: state.dropOffset)
+
+        // The case fades as one object. Everything from the contact shadow to the lid is composited
+        // into a single layer at `caseAlpha`, so no translucent pass inside it can stack on another
+        // mid-fade. At rest the layer is skipped, so the settled instrument pays nothing for it.
+        let layered = state.caseAlpha < 0.999
+        if layered {
+            context.setAlpha(CGFloat(state.caseAlpha))
+            context.beginTransparencyLayer(in: instrumentBounds(state), auxiliaryInfo: nil)
+        }
         drawContactShadow(in: context, state: state)
         drawLidShadow(in: context, state: state)
 
@@ -62,6 +86,9 @@ final class CompassRenderer {
         // before the card (as this used to) let the card paint over the lid, so the lid looked
         // clipped along a straight line for the whole first half of the opening swing.
         drawLid(in: context, state: state)
+        if layered {
+            context.endTransparencyLayer()
+        }
 
         context.restoreGState()
     }
@@ -164,6 +191,25 @@ extension CompassRenderer {
         string.draw(at: CGPoint(x: -size.width / 2, y: -size.height / 2))
         context.restoreGState()
     }
+
+    /// The page the instrument can paint on, in view space. The case layer is clipped to this, so
+    /// it has to reach the lid at its highest under the current tilt, the contact shadow (drawn flat
+    /// in view space, 1.5 case radii out, further while it is landing, and dropped 0.12 below the
+    /// centre) and the lug.
+    private func instrumentBounds(_ state: State) -> CGRect {
+        let m = state.metrics
+        let margin = m.cardRadius * 0.05
+        let lidTop = (0...96).map { step -> CGFloat in
+            let angle = CGFloat(step) / 96 * 2 * .pi
+            let point = Point3D(radius: state.lid.radius, angle: angle)
+            return state.camera.project(state.lid.swing(point)).point.y
+        }.min() ?? 0
+        let spread = contactShadowSpread(state)
+        let half = m.caseRadius * 1.5 * spread
+        let top = min(lidTop, -half) - margin
+        let bottom = max(m.lugReach, m.caseRadius * (0.12 + 1.5 * 1.06 * spread)) + margin
+        return CGRect(x: -half - margin, y: top, width: (half + margin) * 2, height: bottom - top)
+    }
 }
 
 // MARK: - Scrim and shadows
@@ -178,7 +224,7 @@ extension CompassRenderer {
         // Warm dark, and only under the instrument: dimming the whole screen would make this
         // a modal instead of an overlay you can still see past.
         let radius = scrimRadius(state)
-        let alpha = state.contentAlpha
+        let alpha = state.scrimAlpha
         let colours = [
             CompassTheme.shadow.withAlphaComponent(CompassTheme.backdropAlpha * CGFloat(alpha)).cgColor,
             CompassTheme.shadow.withAlphaComponent(CompassTheme.backdropMidAlpha * CGFloat(alpha)).cgColor,
@@ -199,13 +245,20 @@ extension CompassRenderer {
         )
     }
 
+    /// How far the contact shadow reaches, relative to its settled size: 1.15 at presence 0 (the box
+    /// not yet risen), easing to 1 as the instrument lands. Written as `1 + k * (1 - p)` so the rest
+    /// value is exactly 1.
+    private func contactShadowSpread(_ state: State) -> CGFloat {
+        CGFloat(1 + 0.15 * (1 - state.presence))
+    }
+
     private func drawContactShadow(in context: CGContext, state: State) {
         let m = state.metrics
-        let radius = m.caseRadius * 1.5
+        let radius = m.caseRadius * 1.5 * contactShadowSpread(state)
         let centre = CGPoint(x: 0, y: m.caseRadius * 0.12)
         let colours = [
-            NSColor.black.withAlphaComponent(0.62 * CGFloat(state.contentAlpha)).cgColor,
-            NSColor.black.withAlphaComponent(0.30 * CGFloat(state.contentAlpha)).cgColor,
+            NSColor.black.withAlphaComponent(0.62).cgColor,
+            NSColor.black.withAlphaComponent(0.30).cgColor,
             NSColor.black.withAlphaComponent(0).cgColor,
         ] as CFArray
         guard let gradient = CGGradient(
@@ -238,7 +291,6 @@ extension CompassRenderer {
         let m = state.metrics
         let near = min(1, max(0, (CGFloat(sin(angle)) - 0.12) / 0.6))
         let radius = m.lidRadius
-        let alpha = CGFloat(state.contentAlpha)
 
         context.saveGState()
         let silhouette = (0...96).map { step -> CGPoint in
@@ -259,9 +311,9 @@ extension CompassRenderer {
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
             colors: [
                 NSColor(calibratedRed: 0.094, green: 0.063, blue: 0.031, alpha: 1)
-                    .withAlphaComponent(0.30 * near * alpha).cgColor,
+                    .withAlphaComponent(0.30 * near).cgColor,
                 NSColor(calibratedRed: 0.094, green: 0.063, blue: 0.031, alpha: 1)
-                    .withAlphaComponent(0.13 * near * alpha).cgColor,
+                    .withAlphaComponent(0.13 * near).cgColor,
                 NSColor(calibratedRed: 0.094, green: 0.063, blue: 0.031, alpha: 1)
                     .withAlphaComponent(0).cgColor,
             ] as CFArray,
@@ -288,9 +340,9 @@ extension CompassRenderer {
 
     private func drawLid(in context: CGContext, state: State) {
         let lid = state.lid
-        guard lid.openness > 0.004 else { return }
         let radius = lid.radius
-        let alpha = CGFloat(state.contentAlpha)
+        // No fade of its own. The lid is part of the case, so the case layer in `draw` fades it with
+        // everything else. Shut, it stays opaque over the card until that layer takes it out.
 
         func lidPoint(_ angle: CGFloat, _ r: CGFloat) -> CGPoint {
             state.camera.project(lid.swing(Point3D(radius: r, angle: angle))).point
@@ -315,8 +367,7 @@ extension CompassRenderer {
         context.saveGState()
         context.translateBy(x: 0, y: radius * 0.012 * sin(lid.angle))
         context.addPath(rimPath)
-        context.setFillColor(NSColor(calibratedRed: 0.239, green: 0.184, blue: 0.110, alpha: 1)
-            .withAlphaComponent(alpha).cgColor)
+        context.setFillColor(NSColor(calibratedRed: 0.239, green: 0.184, blue: 0.110, alpha: 1).cgColor)
         context.fillPath()
         context.restoreGState()
 
@@ -324,7 +375,7 @@ extension CompassRenderer {
         // case's bright top — lit like the case it reads as a plate hovering over the brass.
         context.saveGState()
         context.addPath(rimPath)
-        context.setFillColor(CompassTheme.brassMid.withAlphaComponent(alpha).cgColor)
+        context.setFillColor(CompassTheme.brassMid.cgColor)
         context.fillPath()
         context.addPath(rimPath)
         context.clip()
@@ -334,10 +385,10 @@ extension CompassRenderer {
         if let gradient = CGGradient(
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
             colors: [
-                NSColor(calibratedRed: 0.290, green: 0.235, blue: 0.114, alpha: 1).withAlphaComponent(alpha).cgColor,
-                NSColor(calibratedRed: 0.431, green: 0.357, blue: 0.224, alpha: 1).withAlphaComponent(alpha).cgColor,
-                NSColor(calibratedRed: 0.545, green: 0.463, blue: 0.286, alpha: 1).withAlphaComponent(alpha).cgColor,
-                NSColor(calibratedRed: 0.490, green: 0.416, blue: 0.267, alpha: 1).withAlphaComponent(alpha).cgColor,
+                NSColor(calibratedRed: 0.290, green: 0.235, blue: 0.114, alpha: 1).cgColor,
+                NSColor(calibratedRed: 0.431, green: 0.357, blue: 0.224, alpha: 1).cgColor,
+                NSColor(calibratedRed: 0.545, green: 0.463, blue: 0.286, alpha: 1).cgColor,
+                NSColor(calibratedRed: 0.490, green: 0.416, blue: 0.267, alpha: 1).cgColor,
             ] as CFArray,
             locations: [0, 0.20, 0.52, 1] as [CGFloat]
         ) {
@@ -358,9 +409,9 @@ extension CompassRenderer {
             let ring = (0...60).map { lidPoint(CGFloat($0) / 60 * 2 * .pi, groove) }
             let strength = (0.05 + 0.05 * (1 - t))
             let colour: NSColor = step % 2 == 0
-                ? NSColor.black.withAlphaComponent(strength * alpha)
+                ? NSColor.black.withAlphaComponent(strength)
                 : NSColor(calibratedRed: 1, green: 0.965, blue: 0.871, alpha: 1)
-                    .withAlphaComponent(strength * alpha)
+                    .withAlphaComponent(strength)
             stroke(ring, context, colour, width: max(0.7, radius * 0.0055))
         }
 
@@ -369,9 +420,9 @@ extension CompassRenderer {
         if let sheen = CGGradient(
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
             colors: [
-                NSColor(calibratedRed: 1, green: 0.965, blue: 0.863, alpha: 1).withAlphaComponent(0.20 * alpha).cgColor,
-                NSColor(calibratedRed: 1, green: 0.965, blue: 0.863, alpha: 1).withAlphaComponent(0.05 * alpha).cgColor,
-                NSColor(calibratedRed: 0.078, green: 0.055, blue: 0.027, alpha: 1).withAlphaComponent(0.18 * alpha).cgColor,
+                NSColor(calibratedRed: 1, green: 0.965, blue: 0.863, alpha: 1).withAlphaComponent(0.20).cgColor,
+                NSColor(calibratedRed: 1, green: 0.965, blue: 0.863, alpha: 1).withAlphaComponent(0.05).cgColor,
+                NSColor(calibratedRed: 0.078, green: 0.055, blue: 0.027, alpha: 1).withAlphaComponent(0.18).cgColor,
             ] as CFArray,
             locations: [0, 0.40, 1] as [CGFloat]
         ) {
@@ -389,8 +440,8 @@ extension CompassRenderer {
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
             colors: [
                 NSColor.black.withAlphaComponent(0).cgColor,
-                NSColor.black.withAlphaComponent(0.10 * alpha).cgColor,
-                NSColor.black.withAlphaComponent(0.42 * alpha).cgColor,
+                NSColor.black.withAlphaComponent(0.10).cgColor,
+                NSColor.black.withAlphaComponent(0.42).cgColor,
             ] as CFArray,
             locations: [0, 0.72, 1] as [CGFloat]
         ) {
@@ -406,15 +457,15 @@ extension CompassRenderer {
 
         // Engraved double border inside the bead: a dark cut with a lit lower lip.
         for (r, colour, width) in [
-            (radius * 0.855, NSColor.black.withAlphaComponent(0.30 * alpha), CGFloat(1.1)),
-            (radius * 0.815, NSColor.black.withAlphaComponent(0.22 * alpha), CGFloat(0.9)),
-            (radius * 0.800, NSColor.white.withAlphaComponent(0.13 * alpha), CGFloat(0.8)),
+            (radius * 0.855, NSColor.black.withAlphaComponent(0.30), CGFloat(1.1)),
+            (radius * 0.815, NSColor.black.withAlphaComponent(0.22), CGFloat(0.9)),
+            (radius * 0.800, NSColor.white.withAlphaComponent(0.13), CGFloat(0.8)),
         ] {
             let ring = (0...96).map { lidPoint(CGFloat($0) / 96 * 2 * .pi, r) }
             stroke(ring, context, colour, width: width)
         }
 
-        drawLidRose(in: context, radius: radius, alpha: alpha, point: lidPoint, flat: lidFlat)
+        drawLidRose(in: context, radius: radius, point: lidPoint, flat: lidFlat)
 
         // Maker's mark, struck into the plate below the rose.
         drawText(
@@ -422,7 +473,7 @@ extension CompassRenderer {
             at: lidFlat(0, radius * 0.50),
             scale: min(1.0, max(0.62, abs(cos(lid.angle)) + 0.55)),
             font: CompassTheme.serif(max(5.5, radius * 0.052), .semibold),
-            colour: NSColor.black.withAlphaComponent(0.30 * alpha),
+            colour: NSColor.black.withAlphaComponent(0.30),
             in: context
         )
 
@@ -434,7 +485,7 @@ extension CompassRenderer {
             guard let gradient = CGGradient(
                 colorsSpace: CGColorSpaceCreateDeviceRGB(),
                 colors: [
-                    CompassTheme.patina.withAlphaComponent(blotch.alpha * CompassTheme.wearGain * alpha).cgColor,
+                    CompassTheme.patina.withAlphaComponent(blotch.alpha * CompassTheme.wearGain).cgColor,
                     CompassTheme.patina.withAlphaComponent(0).cgColor,
                 ] as CFArray,
                 locations: [0, 1]
@@ -454,13 +505,13 @@ extension CompassRenderer {
         for blot in grain.lidPatina(radius: radius) {
             let point = lidFlat(blot.x * radius, blot.y * radius)
             drawWear(blot, at: point, unit: radius * 1.15, colour: CompassTheme.patina,
-                     alpha: alpha * CompassTheme.wearGain, in: context)
+                     alpha: CompassTheme.wearGain, in: context)
         }
         // Rust, only along the hinge seam where moisture collects.
         for spot in grain.rust(radius: radius) {
             let point = lidFlat(spot.x * radius, spot.y * radius)
             drawWear(spot, at: point, unit: radius, colour: CompassTheme.rust,
-                     alpha: alpha * CompassTheme.wearGain, in: context)
+                     alpha: CompassTheme.wearGain, in: context)
         }
 
         context.restoreGState()
@@ -468,11 +519,11 @@ extension CompassRenderer {
         // Bead: only the far arc is outlined. A full outline crosses the case at the hinge and
         // makes the lid look detached from the box.
         let farArc = (0...64).map { lidPoint(.pi + CGFloat($0) / 64 * .pi, radius) }
-        stroke(farArc, context, NSColor.black.withAlphaComponent(0.62 * alpha),
+        stroke(farArc, context, NSColor.black.withAlphaComponent(0.62),
                width: max(1.1, radius * 0.014))
         let lit = (0...40).map { lidPoint(.pi * 1.18 + CGFloat($0) / 40 * .pi * 0.85, radius) }
         stroke(lit, context,
-               NSColor.white.withAlphaComponent((0.10 + 0.24 * abs(sin(lid.angle))) * alpha),
+               NSColor.white.withAlphaComponent(0.10 + 0.24 * abs(sin(lid.angle))),
                width: max(0.9, radius * 0.007))
     }
 
@@ -514,7 +565,6 @@ extension CompassRenderer {
     private func drawLidRose(
         in context: CGContext,
         radius: CGFloat,
-        alpha: CGFloat,
         point: (CGFloat, CGFloat) -> CGPoint,
         flat: (CGFloat, CGFloat) -> CGPoint
     ) {
@@ -533,7 +583,7 @@ extension CompassRenderer {
             let b = point(angle, outerR)
             context.saveGState()
             let tickAlpha: CGFloat = isLong ? 0.40 : 0.24
-            context.setStrokeColor(NSColor.black.withAlphaComponent(tickAlpha * alpha).cgColor)
+            context.setStrokeColor(NSColor.black.withAlphaComponent(tickAlpha).cgColor)
             context.setLineWidth(isLong ? 1.0 : 0.7)
             context.move(to: a)
             context.addLine(to: b)
@@ -548,8 +598,8 @@ extension CompassRenderer {
         if let plate = CGGradient(
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
             colors: [
-                NSColor(calibratedRed: 0.886, green: 0.808, blue: 0.651, alpha: 0.10 * alpha).cgColor,
-                NSColor(calibratedRed: 0.839, green: 0.753, blue: 0.588, alpha: 0.05 * alpha).cgColor,
+                NSColor(calibratedRed: 0.886, green: 0.808, blue: 0.651, alpha: 0.10).cgColor,
+                NSColor(calibratedRed: 0.839, green: 0.753, blue: 0.588, alpha: 0.05).cgColor,
                 NSColor(calibratedRed: 0.706, green: 0.612, blue: 0.439, alpha: 0).cgColor,
             ] as CFArray,
             locations: [0, 0.7, 1] as [CGFloat]
@@ -584,7 +634,7 @@ extension CompassRenderer {
             star.addLines(between: [left, apex, right])
             star.closeSubpath()
             context.addPath(star)
-            context.setStrokeColor(NSColor.black.withAlphaComponent(0.46 * alpha).cgColor)
+            context.setStrokeColor(NSColor.black.withAlphaComponent(0.46).cgColor)
             context.setLineWidth(max(0.8, tip * 0.012))
             context.strokePath()
 
@@ -594,21 +644,21 @@ extension CompassRenderer {
             litFace.addLines(between: [spine, apex, left])
             litFace.closeSubpath()
             context.addPath(litFace)
-            context.setFillColor(NSColor.white.withAlphaComponent(lit * alpha).cgColor)
+            context.setFillColor(NSColor.white.withAlphaComponent(lit).cgColor)
             context.fillPath()
 
             let darkFace = CGMutablePath()
             darkFace.addLines(between: [spine, apex, right])
             darkFace.closeSubpath()
             context.addPath(darkFace)
-            context.setFillColor(NSColor.black.withAlphaComponent(dark * alpha).cgColor)
+            context.setFillColor(NSColor.black.withAlphaComponent(dark).cgColor)
             context.fillPath()
         }
 
         // The cut circle the points sit inside.
         for (r, colour, width) in [
-            (outer * 1.045, NSColor.black.withAlphaComponent(0.34 * alpha), CGFloat(max(1.0, radius * 0.012))),
-            (outer * 1.020, NSColor.white.withAlphaComponent(0.14 * alpha), CGFloat(max(0.8, radius * 0.008))),
+            (outer * 1.045, NSColor.black.withAlphaComponent(0.34), CGFloat(max(1.0, radius * 0.012))),
+            (outer * 1.020, NSColor.white.withAlphaComponent(0.14), CGFloat(max(0.8, radius * 0.008))),
         ] {
             let ring = (0...96).map { point(CGFloat($0) / 96 * 2 * .pi, r) }
             stroke(ring, context, colour, width: width)
@@ -622,9 +672,9 @@ extension CompassRenderer {
         if let gradient = CGGradient(
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
             colors: [
-                NSColor(calibratedRed: 0.78, green: 0.67, blue: 0.45, alpha: 0.55 * alpha).cgColor,
-                NSColor(calibratedRed: 0.47, green: 0.38, blue: 0.22, alpha: 0.45 * alpha).cgColor,
-                NSColor(calibratedRed: 0.18, green: 0.13, blue: 0.07, alpha: 0.55 * alpha).cgColor,
+                NSColor(calibratedRed: 0.78, green: 0.67, blue: 0.45, alpha: 0.55).cgColor,
+                NSColor(calibratedRed: 0.47, green: 0.38, blue: 0.22, alpha: 0.45).cgColor,
+                NSColor(calibratedRed: 0.18, green: 0.13, blue: 0.07, alpha: 0.55).cgColor,
             ] as CFArray,
             locations: [0, 0.65, 1] as [CGFloat]
         ) {
@@ -644,7 +694,7 @@ extension CompassRenderer {
             )
             context.restoreGState()
         }
-        stroke(boss, context, NSColor.black.withAlphaComponent(0.40 * alpha), width: 0.9)
+        stroke(boss, context, NSColor.black.withAlphaComponent(0.40), width: 0.9)
     }
 
 
@@ -700,7 +750,6 @@ extension CompassRenderer {
     private func drawBrass(in context: CGContext, state: State, metrics: CompassMetrics) {
         let outer = metrics.caseRadius
         let inner = metrics.cardRadius
-        let alpha = CGFloat(state.contentAlpha)
         let ring = annulus(outer: outer, inner: inner, state)
 
         context.saveGState()
@@ -743,9 +792,9 @@ extension CompassRenderer {
         // Rim lines: the outer edge, the card's seat, and a lit inner lip.
         context.saveGState()
         for (radius, colour, width) in [
-            (outer, NSColor.black.withAlphaComponent(0.60 * alpha), CGFloat(1.2)),
-            (inner, NSColor.black.withAlphaComponent(0.50 * alpha), CGFloat(1.3)),
-            (inner * 0.986, NSColor.white.withAlphaComponent(0.13 * alpha), CGFloat(1)),
+            (outer, NSColor.black.withAlphaComponent(0.60), CGFloat(1.2)),
+            (inner, NSColor.black.withAlphaComponent(0.50), CGFloat(1.3)),
+            (inner * 0.986, NSColor.white.withAlphaComponent(0.13), CGFloat(1)),
         ] {
             let path = CGMutablePath()
             path.addLines(between: circle(radius, state))
@@ -760,7 +809,6 @@ extension CompassRenderer {
 
     /// Age on the metal: soft olive blotches along the outer third, never rust spots.
     private func drawPatina(in context: CGContext, state: State, metrics: CompassMetrics) {
-        let alpha = CGFloat(state.contentAlpha)
         for blot in grain.patina(radius: metrics.cardRadius) {
             let point = state.camera.project(Point3D(
                 x: blot.x * metrics.cardRadius,
@@ -771,8 +819,8 @@ extension CompassRenderer {
             guard let gradient = CGGradient(
                 colorsSpace: CGColorSpaceCreateDeviceRGB(),
                 colors: [
-                    CompassTheme.patina.withAlphaComponent(blot.alpha * CompassTheme.wearGain * alpha).cgColor,
-                    CompassTheme.patina.withAlphaComponent(blot.alpha * 0.55 * CompassTheme.wearGain * alpha).cgColor,
+                    CompassTheme.patina.withAlphaComponent(blot.alpha * CompassTheme.wearGain).cgColor,
+                    CompassTheme.patina.withAlphaComponent(blot.alpha * 0.55 * CompassTheme.wearGain).cgColor,
                     CompassTheme.patina.withAlphaComponent(0).cgColor,
                 ] as CFArray,
                 locations: [0, 0.6, 1]
@@ -793,12 +841,11 @@ extension CompassRenderer {
 
     /// Burnished arcs where a thumb keeps polishing the metal bright.
     private func drawBuffMarks(in context: CGContext, state: State, metrics: CompassMetrics) {
-        let alpha = CGFloat(state.contentAlpha)
         for buff in grain.buffs(radius: metrics.cardRadius) {
             let from = state.camera.project(Point3D(x: buff.radius * sin(buff.angle), y: -buff.radius * cos(buff.angle), z: metrics.cardDepth))
             let to = state.camera.project(Point3D(x: buff.radius * sin(buff.angle + buff.length), y: -buff.radius * cos(buff.angle + buff.length), z: metrics.cardDepth))
             context.saveGState()
-            context.setStrokeColor(CompassTheme.brassHi.withAlphaComponent(buff.alpha * CompassTheme.wearGain * alpha).cgColor)
+            context.setStrokeColor(CompassTheme.brassHi.withAlphaComponent(buff.alpha * CompassTheme.wearGain).cgColor)
             context.setLineWidth(max(1.4, metrics.cardRadius * 0.012))
             context.setLineCap(.round)
             context.move(to: from.point)
@@ -811,14 +858,13 @@ extension CompassRenderer {
     /// The dark film that collects just inside the reeding, where a thumb never reaches.
     private func drawTarnishBand(in context: CGContext, state: State, metrics: CompassMetrics) {
         let outer = metrics.caseRadius
-        let alpha = CGFloat(state.contentAlpha)
         guard let gradient = CGGradient(
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
             colors: [
                 CompassTheme.patina.withAlphaComponent(0).cgColor,
-                CompassTheme.tarnishWarm.withAlphaComponent(0.10 * alpha).cgColor,
-                CompassTheme.patina.withAlphaComponent(0.22 * alpha).cgColor,
-                CompassTheme.patina.withAlphaComponent(0.44 * alpha).cgColor,
+                CompassTheme.tarnishWarm.withAlphaComponent(0.10).cgColor,
+                CompassTheme.patina.withAlphaComponent(0.22).cgColor,
+                CompassTheme.patina.withAlphaComponent(0.44).cgColor,
             ] as CFArray,
             locations: [0, 0.55, 0.82, 1]
         ) else { return }
@@ -847,7 +893,7 @@ extension CompassRenderer {
             }
             context.saveGState()
             context.setLineCap(.round)
-            context.setStrokeColor(CompassTheme.brassHi.withAlphaComponent(0.16 * alpha).cgColor)
+            context.setStrokeColor(CompassTheme.brassHi.withAlphaComponent(0.16).cgColor)
             context.setLineWidth(outer * 0.075)
             context.addLines(between: arc)
             context.strokePath()
@@ -859,7 +905,6 @@ extension CompassRenderer {
     /// they lean with everything else.
     private func drawReeding(in context: CGContext, state: State, metrics: CompassMetrics) {
         let outer = metrics.caseRadius
-        let alpha = CGFloat(state.contentAlpha)
         let count = 190
         context.saveGState()
         for index in 0..<count {
@@ -869,7 +914,7 @@ extension CompassRenderer {
             let lit = index % 2 == 0
             context.setStrokeColor(
                 (lit ? NSColor.white.withAlphaComponent(0.15) : NSColor.black.withAlphaComponent(0.22))
-                    .withAlphaComponent((lit ? 0.15 : 0.22) * alpha)
+                    .withAlphaComponent(lit ? 0.15 : 0.22)
                     .cgColor
             )
             context.setLineWidth(1)
@@ -886,7 +931,6 @@ extension CompassRenderer {
 extension CompassRenderer {
 
     private func drawLug(in context: CGContext, state: State, metrics: CompassMetrics) {
-        let alpha = CGFloat(state.contentAlpha)
         let z = -metrics.wallDepth * 0.45
 
         // Stem.
@@ -921,7 +965,7 @@ extension CompassRenderer {
             )
             context.restoreGState()
         }
-        context.setStrokeColor(NSColor.black.withAlphaComponent(0.55 * alpha).cgColor)
+        context.setStrokeColor(NSColor.black.withAlphaComponent(0.55).cgColor)
         context.setLineWidth(1)
         context.strokePath()
 
@@ -955,14 +999,13 @@ extension CompassRenderer {
                 z: z
             )
         }
-        stroke(highlight, context, NSColor.white.withAlphaComponent(0.40 * alpha), width: 1.1)
+        stroke(highlight, context, NSColor.white.withAlphaComponent(0.40), width: 1.1)
         context.restoreGState()
     }
 
     /// The hinge barrel across the top of the case. It is what makes the open lid read as
     /// attached rather than floating above the box.
     private func drawHinge(in context: CGContext, state: State, metrics: CompassMetrics) {
-        let alpha = CGFloat(state.contentAlpha)
         // On the lid's own pivot, not the case's rim. These used to be the same line, so the
         // barrel could be drawn at `-caseRadius` and look right; now that the lid closes inside
         // the lip and pivots on a short strap, drawing the barrel on the case's rim leaves it
@@ -973,7 +1016,7 @@ extension CompassRenderer {
         let shaftFrom = state.camera.project(Point3D(x: -metrics.hingeHalfSpan * 1.11, y: y, z: z))
         let shaftTo = state.camera.project(Point3D(x: metrics.hingeHalfSpan * 1.11, y: y, z: z))
         context.saveGState()
-        context.setStrokeColor(CompassTheme.brassMid.withAlphaComponent(alpha).cgColor)
+        context.setStrokeColor(CompassTheme.brassMid.cgColor)
         context.setLineWidth(metrics.cardRadius * 0.026)
         context.setLineCap(.round)
         context.move(to: shaftFrom.point)
@@ -1013,7 +1056,7 @@ extension CompassRenderer {
             context.restoreGState()
             context.saveGState()
             context.addEllipse(in: rect)
-            context.setStrokeColor(NSColor.black.withAlphaComponent(0.50 * alpha).cgColor)
+            context.setStrokeColor(NSColor.black.withAlphaComponent(0.50).cgColor)
             context.setLineWidth(0.9)
             context.strokePath()
             context.restoreGState()
@@ -1031,9 +1074,9 @@ extension CompassRenderer {
         let bloom = CGGradient(
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
             colors: [
-                CompassTheme.rustBloom.withAlphaComponent(0.50 * alpha).cgColor,
-                CompassTheme.rust.withAlphaComponent(0.30 * alpha).cgColor,
-                CompassTheme.rust.withAlphaComponent(0.10 * alpha).cgColor,
+                CompassTheme.rustBloom.withAlphaComponent(0.50).cgColor,
+                CompassTheme.rust.withAlphaComponent(0.30).cgColor,
+                CompassTheme.rust.withAlphaComponent(0.10).cgColor,
                 CompassTheme.rust.withAlphaComponent(0).cgColor,
             ] as CFArray,
             locations: [0, 0.30, 0.62, 1]
@@ -1064,7 +1107,6 @@ extension CompassRenderer {
 
     private func drawCard(in context: CGContext, state: State, metrics: CompassMetrics) {
         let radius = metrics.cardRadius
-        let alpha = CGFloat(state.contentAlpha)
         let circlePath = CGMutablePath()
         circlePath.addLines(between: circle(radius, state))
         circlePath.closeSubpath()
@@ -1096,7 +1138,7 @@ extension CompassRenderer {
         }
 
         grain.fill(in: context, scale: radius)
-        drawRubRing(in: context, metrics: metrics, alpha: alpha)
+        drawRubRing(in: context, metrics: metrics)
         drawAgeing(in: context, state: state, metrics: metrics)
         drawSeatGrime(in: context, state: state, metrics: metrics)
         context.restoreGState()
@@ -1104,7 +1146,7 @@ extension CompassRenderer {
         // A hairline where paper meets brass, so the seat reads as a gap not a blend.
         context.saveGState()
         context.addPath(circlePath)
-        context.setStrokeColor(NSColor.black.withAlphaComponent(0.38 * alpha).cgColor)
+        context.setStrokeColor(NSColor.black.withAlphaComponent(0.38).cgColor)
         context.setLineWidth(1)
         context.strokePath()
         context.restoreGState()
@@ -1112,13 +1154,13 @@ extension CompassRenderer {
 
     /// A century of the lid closing on the same spot has polished the paper just outside the
     /// hub. It is the wear mark that most says "used" rather than "reproduced".
-    private func drawRubRing(in context: CGContext, metrics: CompassMetrics, alpha: CGFloat) {
+    private func drawRubRing(in context: CGContext, metrics: CompassMetrics) {
         let radius = metrics.cardRadius
         guard let gradient = CGGradient(
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
             colors: [
-                NSColor(calibratedWhite: 1, alpha: 0.10 * alpha).cgColor,
-                NSColor(calibratedWhite: 1, alpha: 0.05 * alpha).cgColor,
+                NSColor(calibratedWhite: 1, alpha: 0.10).cgColor,
+                NSColor(calibratedWhite: 1, alpha: 0.05).cgColor,
                 NSColor(calibratedWhite: 1, alpha: 0).cgColor,
             ] as CFArray,
             locations: [0, 0.5, 1]
@@ -1137,8 +1179,6 @@ extension CompassRenderer {
 
     /// Foxing and uneven ageing, so no two square inches of the card are the same tone.
     private func drawAgeing(in context: CGContext, state: State, metrics: CompassMetrics) {
-        let alpha = CGFloat(state.contentAlpha)
-
         // Broad mottling first, under the sharp foxing: at a glance this is most of what makes
         // the card read as old paper rather than as a printed gradient.
         for blotch in grain.cardUnevenness(radius: metrics.cardRadius) {
@@ -1152,7 +1192,7 @@ extension CompassRenderer {
             guard let gradient = CGGradient(
                 colorsSpace: CGColorSpaceCreateDeviceRGB(),
                 colors: [
-                    tone.withAlphaComponent(blotch.alpha * CompassTheme.wearGain * alpha).cgColor,
+                    tone.withAlphaComponent(blotch.alpha * CompassTheme.wearGain).cgColor,
                     tone.withAlphaComponent(0).cgColor,
                 ] as CFArray,
                 locations: [0, 1]
@@ -1179,7 +1219,7 @@ extension CompassRenderer {
                 colorsSpace: CGColorSpaceCreateDeviceRGB(),
                 colors: [
                     NSColor(calibratedRed: 0.478, green: 0.369, blue: 0.212, alpha: 1)
-                        .withAlphaComponent(spot.alpha * CompassTheme.wearGain * alpha).cgColor,
+                        .withAlphaComponent(spot.alpha * CompassTheme.wearGain).cgColor,
                     NSColor(calibratedRed: 0.478, green: 0.369, blue: 0.212, alpha: 1).withAlphaComponent(0).cgColor,
                 ] as CFArray,
                 locations: [0, 1]
@@ -1202,13 +1242,12 @@ extension CompassRenderer {
     /// heaviest at the bottom where dust settles.
     private func drawSeatGrime(in context: CGContext, state: State, metrics: CompassMetrics) {
         let radius = metrics.cardRadius
-        let alpha = CGFloat(state.contentAlpha)
         guard let gradient = CGGradient(
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
             colors: [
                 NSColor(calibratedRed: 0.259, green: 0.196, blue: 0.110, alpha: 1).withAlphaComponent(0).cgColor,
-                NSColor(calibratedRed: 0.259, green: 0.196, blue: 0.110, alpha: 1).withAlphaComponent(0.10 * alpha).cgColor,
-                NSColor(calibratedRed: 0.208, green: 0.149, blue: 0.078, alpha: 1).withAlphaComponent(0.34 * alpha).cgColor,
+                NSColor(calibratedRed: 0.259, green: 0.196, blue: 0.110, alpha: 1).withAlphaComponent(0.10).cgColor,
+                NSColor(calibratedRed: 0.208, green: 0.149, blue: 0.078, alpha: 1).withAlphaComponent(0.34).cgColor,
             ] as CFArray,
             locations: [0, 0.72, 1]
         ) else { return }

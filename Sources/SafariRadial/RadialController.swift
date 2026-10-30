@@ -175,8 +175,12 @@ final class RadialController {
             background: preferences.openInBackground
         )
         if delay > 0 {
+            // The close belongs to the presentation that took the key. If the menu is summoned again
+            // inside the delay, that is a new presentation, and this close must not take it down.
+            let generation = presentation
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                self?.finishAfterClose()
+                guard let self, self.presentation == generation else { return }
+                self.finishAfterClose()
             }
         } else {
             finishAfterClose()
