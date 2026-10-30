@@ -14,6 +14,9 @@ public struct Preferences: Codable, Equatable {
     public var autoSyncOnLaunch: Bool
     /// Reveal the number badge on each slice.
     public var showNumbers: Bool
+    /// Draw the compass with its hard-edged wear: scratches, dents, chips, rust and folds. Off
+    /// shows the cleaner, softly aged instrument.
+    public var compassWorn: Bool
     /// Radius of the menu in points.
     public var menuRadius: Double
     /// Start the app automatically when you log in.
@@ -44,6 +47,7 @@ public struct Preferences: Codable, Equatable {
         openInBackground: Bool = false,
         autoSyncOnLaunch: Bool = true,
         showNumbers: Bool = true,
+        compassWorn: Bool = true,
         menuRadius: Double = 200,
         launchAtLogin: Bool = false,
         hasCompletedOnboarding: Bool = false,
@@ -55,6 +59,7 @@ public struct Preferences: Codable, Equatable {
         self.openInBackground = openInBackground
         self.autoSyncOnLaunch = autoSyncOnLaunch
         self.showNumbers = showNumbers
+        self.compassWorn = compassWorn
         self.menuRadius = menuRadius
         self.launchAtLogin = launchAtLogin
         self.hasCompletedOnboarding = hasCompletedOnboarding
@@ -73,6 +78,7 @@ public struct Preferences: Codable, Equatable {
         openInBackground = try container.decodeIfPresent(Bool.self, forKey: .openInBackground) ?? fallback.openInBackground
         autoSyncOnLaunch = try container.decodeIfPresent(Bool.self, forKey: .autoSyncOnLaunch) ?? fallback.autoSyncOnLaunch
         showNumbers = try container.decodeIfPresent(Bool.self, forKey: .showNumbers) ?? fallback.showNumbers
+        compassWorn = try container.decodeIfPresent(Bool.self, forKey: .compassWorn) ?? fallback.compassWorn
         menuRadius = try container.decodeIfPresent(Double.self, forKey: .menuRadius) ?? fallback.menuRadius
         launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? fallback.launchAtLogin
         // Absent keys mean an older preferences file, which also means the user never

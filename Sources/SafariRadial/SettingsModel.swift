@@ -21,6 +21,7 @@ final class SettingsModel: ObservableObject {
         self.hotkey = hotkey
         self.preferences = environment.preferences
         self.hasFullDiskAccess = environment.hasFullDiskAccess
+        CompassTheme.isWorn = preferences.compassWorn
     }
 
     func refresh() {
@@ -116,6 +117,10 @@ final class SettingsModel: ObservableObject {
         mutate { $0.showNumbers = value }
     }
 
+    func setCompassWorn(_ value: Bool) {
+        mutate { $0.compassWorn = value }
+    }
+
     func setMenuRadius(_ value: Double) {
         mutate { $0.menuRadius = value }
     }
@@ -128,6 +133,7 @@ final class SettingsModel: ObservableObject {
     private func mutate(_ block: (inout Preferences) -> Void) {
         environment.updatePreferences(block)
         preferences = environment.preferences
+        CompassTheme.isWorn = preferences.compassWorn
         onPreferencesChanged?(preferences)
     }
 }

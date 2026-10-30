@@ -35,6 +35,14 @@ enum CompassTheme {
     /// carried and used; past about 1.6 it starts to look dropped.
     static let damageGain: CGFloat = 1.0
 
+    /// Whether the hard-edged wear is drawn at all, from the "Worn brass" setting.
+    ///
+    /// A process-wide switch rather than a parameter, because the renderer is reached through
+    /// the overlay, the manager's embedded dial and the welcome art, and all of them should look
+    /// the same at any moment. `SettingsModel` is the only writer. Off, the compass is the one
+    /// that had only soft ageing: tarnish, foxing and buffing, none of the scars.
+    static var isWorn = true
+
     // MARK: - Paper
 
     /// The card itself. Aged cream, never white: white paper reads as a new print.

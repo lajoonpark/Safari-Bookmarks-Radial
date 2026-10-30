@@ -64,6 +64,11 @@ struct LiveCompass: NSViewRepresentable {
         coordinator.parent = self
         view.isInteractive = interactive
         handle?.view = view
+        // The wear setting is global, so a change arrives here as a plain re-render.
+        if coordinator.lastWorn != CompassTheme.isWorn {
+            coordinator.lastWorn = CompassTheme.isWorn
+            view.needsDisplay = true
+        }
 
         let ids = bookmarks.map(\.id)
         let contentChanged = ids != coordinator.lastIDs || page != coordinator.lastPage
@@ -104,6 +109,7 @@ struct LiveCompass: NSViewRepresentable {
         var lastPage = 0
         var lastNumbers = true
         var lastRadius: CGFloat = 0
+        var lastWorn = CompassTheme.isWorn
 
         func attach(_ view: RadialMenuView, _ owner: LiveCompass) {
             parent = owner

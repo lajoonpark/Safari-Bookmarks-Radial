@@ -281,6 +281,13 @@ struct SettingsView: View {
                 isOn: model.preferences.showNumbers,
                 action: model.setShowNumbers
             )
+
+            toggle(
+                "Worn brass",
+                detail: "Scratches, dents, chips, rust and folds. Off shows the cleaner, softly aged compass.",
+                isOn: model.preferences.compassWorn,
+                action: model.setCompassWorn
+            )
         }
     }
 

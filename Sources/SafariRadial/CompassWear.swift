@@ -220,6 +220,7 @@ extension CompassRenderer {
 
     /// Scuffs, scratches, dents, chips and rust on the bezel ring. Called inside the ring's clip.
     func drawCaseWear(in context: CGContext, state: State, metrics: CompassMetrics) {
+        guard CompassTheme.isWorn else { return }
         let unit = metrics.cardRadius
         let z = metrics.cardDepth
         let map: (CGPoint) -> CGPoint = { state.camera.project(x: $0.x, y: $0.y, z: z) }
@@ -251,6 +252,7 @@ extension CompassRenderer {
 
     /// Scratches down the lug's stem and rust pitting round its ring.
     func drawLugWear(in context: CGContext, state: State, metrics: CompassMetrics, z: CGFloat) {
+        guard CompassTheme.isWorn else { return }
         let unit = metrics.cardRadius
         let map: (CGPoint) -> CGPoint = { state.camera.project(x: $0.x, y: $0.y, z: z) }
         drawScratches(grain.lugScratches, unit: unit, map: map, in: context)
@@ -259,6 +261,7 @@ extension CompassRenderer {
 
     /// Rust along the hinge pin.
     func drawHingeWear(in context: CGContext, state: State, metrics: CompassMetrics) {
+        guard CompassTheme.isWorn else { return }
         let unit = metrics.cardRadius
         let y = state.lid.hingeY
         let z = state.lid.hingeZ
@@ -273,6 +276,7 @@ extension CompassRenderer {
 
     /// The centre boss: scratched where a thumb's nail finds it, and a couple of pits.
     func drawHubWear(in context: CGContext, state: State, metrics: CompassMetrics, boss: CGPath) {
+        guard CompassTheme.isWorn else { return }
         let unit = metrics.hubRadius
         let z = metrics.cardDepth
         let map: (CGPoint) -> CGPoint = { state.camera.project(x: $0.x, y: $0.y, z: z) }
@@ -289,6 +293,7 @@ extension CompassRenderer {
     /// The outside of the lid. `map` takes lid-plane points, in the same units as the lid's
     /// cover radius, to the screen.
     func drawLidCoverWear(unit: CGFloat, map: (CGPoint) -> CGPoint, in context: CGContext) {
+        guard CompassTheme.isWorn else { return }
         drawPores(grain.coverPores, unit: unit, map: map, in: context)
         drawScratches(grain.coverScuffs, unit: unit, map: map, in: context)
         drawScratches(grain.coverScratches, unit: unit, map: map, in: context)
@@ -299,6 +304,7 @@ extension CompassRenderer {
 
     /// The engraved plate inside the lid.
     func drawLidFloorWear(unit: CGFloat, map: (CGPoint) -> CGPoint, in context: CGContext) {
+        guard CompassTheme.isWorn else { return }
         drawScratches(grain.floorScuffs, unit: unit, map: map, in: context)
         drawScratches(grain.floorScratches, unit: unit, map: map, in: context)
         drawPits(grain.floorPits, unit: unit, map: map, in: context)
@@ -309,6 +315,7 @@ extension CompassRenderer {
     /// Folds, watermarks, rubbing at the edge and flyspecks. Drawn under the printing, inside the
     /// card's clip, and kept faint over the wedges so the names stay as legible as they were.
     func drawCardWear(in context: CGContext, state: State, metrics: CompassMetrics) {
+        guard CompassTheme.isWorn else { return }
         let unit = metrics.cardRadius
         let z = metrics.cardDepth
         let map: (CGPoint) -> CGPoint = { state.camera.project(x: $0.x, y: $0.y, z: z) }
@@ -419,6 +426,7 @@ extension CompassRenderer {
     /// Lacquer worn off the needle's high points, showing the steel under it. Called inside the
     /// needle's clip; `at` places a point by distance along and across the needle.
     func drawNeedleWear(in context: CGContext, at: (CGFloat, CGFloat) -> CGPoint, tip: CGFloat, halfWidth: CGFloat) {
+        guard CompassTheme.isWorn else { return }
         let steel = NSColor(calibratedRed: 0.62, green: 0.50, blue: 0.36, alpha: 1)
         let marks: [(along: CGFloat, across: CGFloat, size: CGFloat)] = [
             (0.97, 0.0, 0.55), (0.80, -0.35, 0.32), (0.52, 0.3, 0.38), (0.26, -0.2, 0.30), (-0.45, 0.1, 0.34),
