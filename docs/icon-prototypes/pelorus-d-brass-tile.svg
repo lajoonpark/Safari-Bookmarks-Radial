@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024"><title>Pelorus D - brass tile</title><defs>
+  <radialGradient id="leather" cx=".35" cy=".25" r="1.0"><stop offset="0" stop-color="#3B2A19"/><stop offset="1" stop-color="#17100A"/></radialGradient>
+  <linearGradient id="brassRing" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#D5C08F"/><stop offset=".28" stop-color="#B39257"/>
+    <stop offset=".6" stop-color="#856637"/><stop offset=".85" stop-color="#5A4325"/><stop offset="1" stop-color="#856637"/></linearGradient>
+  <linearGradient id="brassRev" x1="1" y1="1" x2="0" y2="0">
+    <stop offset="0" stop-color="#D5C08F"/><stop offset=".3" stop-color="#B39257"/>
+    <stop offset=".7" stop-color="#856637"/><stop offset="1" stop-color="#5A4325"/></linearGradient>
+  <linearGradient id="brassBody" x1=".1" y1="0" x2=".9" y2="1">
+    <stop offset="0" stop-color="#D5C08F"/><stop offset=".35" stop-color="#B39257"/>
+    <stop offset=".75" stop-color="#856637"/><stop offset="1" stop-color="#5A4325"/></linearGradient>
+  <radialGradient id="card" cx=".42" cy=".38" r=".75">
+    <stop offset="0" stop-color="#E0D1B1"/><stop offset=".68" stop-color="#DCCDAA"/>
+    <stop offset=".93" stop-color="#BDA87E"/><stop offset="1" stop-color="#877049"/></radialGradient>
+  <radialGradient id="hub" cx=".38" cy=".32" r=".8"><stop offset="0" stop-color="#D5C08F"/><stop offset=".5" stop-color="#856637"/><stop offset="1" stop-color="#5A4325"/></radialGradient>
+  <radialGradient id="dome" cx=".36" cy=".3" r=".85"><stop offset="0" stop-color="#D5C08F"/><stop offset=".45" stop-color="#B39257"/><stop offset="1" stop-color="#856637"/></radialGradient>
+  <linearGradient id="gloss" x1="0" y1="0" x2=".7" y2=".8"><stop offset="0" stop-color="#fff" stop-opacity=".20"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient>
+  <filter id="drop" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="22" stdDeviation="24" flood-color="#000" flood-opacity=".55"/></filter>
+  <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="6" stdDeviation="7" flood-color="#000" flood-opacity=".45"/></filter>
+</defs><clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="188"/></clipPath><g clip-path="url(#tile)">
+<rect x="100" y="100" width="824" height="824" rx="188" fill="url(#brassBody)"/>
+<rect x="104" y="104" width="816" height="816" rx="184" fill="none" stroke="#D5C08F" stroke-opacity=".6" stroke-width="4"/>
+<rect x="100" y="100" width="824" height="824" rx="188" fill="none" stroke="#2F2717" stroke-opacity=".7" stroke-width="3"/>
+<circle cx="512" cy="516" r="352" fill="none" stroke="#D5C08F" stroke-opacity=".55" stroke-width="6"/>
+<circle cx="512" cy="512" r="352" fill="#2F2717" fill-opacity=".55"/>
+<g filter="url(#soft)"><circle cx="512" cy="512" r="332" fill="url(#card)" stroke="#877049" stroke-width="4"/></g>
+<path d="M512.0,194.0 L512.0,232.0 M539.7,195.2 L538.7,207.2 M567.2,198.8 L563.4,220.5 M594.3,204.8 L591.2,216.4 M620.8,213.2 L613.2,233.9 M646.4,223.8 L641.3,234.7 M671.0,236.6 L660.0,255.7 M694.4,251.5 L687.5,261.3 M716.4,268.4 L702.3,285.3 M736.9,287.1 L728.4,295.6 M755.6,307.6 L738.7,321.7 M772.5,329.6 L762.7,336.5 M787.4,353.0 L768.3,364.0 M800.2,377.6 L789.3,382.7 M810.8,403.2 L790.1,410.8 M819.2,429.7 L807.6,432.8 M825.2,456.8 L803.5,460.6 M828.8,484.3 L816.8,485.3 M830.0,512.0 L792.0,512.0 M828.8,539.7 L816.8,538.7 M825.2,567.2 L803.5,563.4 M819.2,594.3 L807.6,591.2 M810.8,620.8 L790.1,613.2 M800.2,646.4 L789.3,641.3 M787.4,671.0 L768.3,660.0 M772.5,694.4 L762.7,687.5 M755.6,716.4 L738.7,702.3 M736.9,736.9 L728.4,728.4 M716.4,755.6 L702.3,738.7 M694.4,772.5 L687.5,762.7 M671.0,787.4 L660.0,768.3 M646.4,800.2 L641.3,789.3 M620.8,810.8 L613.2,790.1 M594.3,819.2 L591.2,807.6 M567.2,825.2 L563.4,803.5 M539.7,828.8 L538.7,816.8 M512.0,830.0 L512.0,792.0 M484.3,828.8 L485.3,816.8 M456.8,825.2 L460.6,803.5 M429.7,819.2 L432.8,807.6 M403.2,810.8 L410.8,790.1 M377.6,800.2 L382.7,789.3 M353.0,787.4 L364.0,768.3 M329.6,772.5 L336.5,762.7 M307.6,755.6 L321.7,738.7 M287.1,736.9 L295.6,728.4 M268.4,716.4 L285.3,702.3 M251.5,694.4 L261.3,687.5 M236.6,671.0 L255.7,660.0 M223.8,646.4 L234.7,641.3 M213.2,620.8 L233.9,613.2 M204.8,594.3 L216.4,591.2 M198.8,567.2 L220.5,563.4 M195.2,539.7 L207.2,538.7 M194.0,512.0 L232.0,512.0 M195.2,484.3 L207.2,485.3 M198.8,456.8 L220.5,460.6 M204.8,429.7 L216.4,432.8 M213.2,403.2 L233.9,410.8 M223.8,377.6 L234.7,382.7 M236.6,353.0 L255.7,364.0 M251.5,329.6 L261.3,336.5 M268.4,307.6 L285.3,321.7 M287.1,287.1 L295.6,295.6 M307.6,268.4 L321.7,285.3 M329.6,251.5 L336.5,261.3 M353.0,236.6 L364.0,255.7 M377.6,223.8 L382.7,234.7 M403.2,213.2 L410.8,233.9 M429.7,204.8 L432.8,216.4 M456.8,198.8 L460.6,220.5 M484.3,195.2 L485.3,207.2 " stroke="#3A2C1A" stroke-width="3" fill="none" opacity=".8"/>
+<path d="M546.2,418.0 L607.8,248.9 A280 280 0 0 1 754.5,372.0 L598.6,462.0 A100 100 0 0 0 546.2,418.0 Z" fill="#8F3322" fill-opacity=".2"/>
+<path d="M546.2,418.0 L606.4,252.6 M598.6,462.0 L751.0,374.0 M610.5,529.4 L783.8,559.9 M576.3,588.6 L689.4,723.4 M512.0,612.0 L512.0,788.0 M447.7,588.6 L334.6,723.4 M413.5,529.4 L240.2,559.9 M425.4,462.0 L273.0,374.0 M477.8,418.0 L417.6,252.6 " stroke="#3A2C1A" stroke-width="5" stroke-linecap="round" opacity="0.6" fill="none"/>
+<circle cx="512" cy="512" r="332" fill="url(#gloss)"/>
+<g filter="url(#soft)"><g transform="rotate(40 512 512)">
+      <path d="M512,222 L560,512 L512,512 Z" fill="#8F3322"/>
+      <path d="M512,222 L464,512 L512,512 Z" fill="#B44437"/>
+      <path d="M512,702 L560,512 L512,512 Z" fill="#5E4A2D"/>
+      <path d="M512,702 L464,512 L512,512 Z" fill="#8A7149"/>
+      <path d="M512,222 L560,512 L512,702 L464,512 Z" fill="none" stroke="#2F2717" stroke-opacity=".55" stroke-width="3" stroke-linejoin="round"/>
+    </g><circle cx="512" cy="512" r="58" fill="url(#hub)" stroke="#2F2717" stroke-width="4"/>
+    <circle cx="512" cy="512" r="42.9" fill="none" stroke="#2F2717" stroke-opacity=".45" stroke-width="2.5"/>
+    <circle cx="512" cy="512" r="30.2" fill="url(#dome)" stroke="#5A4325" stroke-opacity=".8" stroke-width="2.5"/></g>
+</g></svg>

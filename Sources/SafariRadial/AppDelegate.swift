@@ -580,62 +580,61 @@ extension AppDelegate: NSWindowDelegate {
     }
 }
 
-/// The menu bar mark: a compass, seen from above.
+/// The menu bar mark: the dial's nine slices as a broken ring, and a needle.
 ///
 /// Drawn rather than borrowed from an SF Symbol, so it matches the product. Rendered as a
-/// template image, so macOS tints it for light and dark menu bars — which means it has to say
-/// "compass" in one colour and about twelve pixels: a case, a card, eight bearings, and a
-/// needle. Everything else would turn to mush at that size.
+/// template image, so macOS tints it for light and dark menu bars, which means it has to say
+/// "radial menu" in one colour and about twelve pixels. The ring is split into nine arcs, one
+/// per slice with a gap on each boundary, so it reads as the dial and not as Safari's own
+/// compass; the needle is aimed at slice 2. A scale or numerals would turn to mush here.
+///
+/// The geometry is on a 64-unit grid and matches `docs/icon-prototypes/menubar-b.svg`.
 enum StatusIcon {
     static func make(size: CGFloat = 18) -> NSImage {
         let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
             guard let context = NSGraphicsContext.current?.cgContext else { return false }
-            let centre = CGPoint(x: rect.midX, y: rect.midY)
-            let outer = rect.width * 0.47
-            let inner = rect.width * 0.35
-            let hub = rect.width * 0.085
+            let unit = rect.width / 64
+
+            // Compass degrees, clockwise from 12 o'clock, in the flipped frame set up below.
+            func point(_ radius: CGFloat, _ degrees: CGFloat) -> CGPoint {
+                let angle = degrees * .pi / 180
+                return CGPoint(x: radius * sin(angle), y: -radius * cos(angle))
+            }
 
             context.saveGState()
-            context.translateBy(x: centre.x, y: centre.y)
+            context.translateBy(x: rect.midX, y: rect.midY)
             context.scaleBy(x: 1, y: -1)
-            context.setFillColor(NSColor.black.cgColor)
 
-            // Case ring, as an annulus so the card shows through.
-            let ring = CGMutablePath()
-            ring.addEllipse(in: CGRect(x: -outer, y: -outer, width: outer * 2, height: outer * 2))
-            ring.addEllipse(in: CGRect(x: -inner, y: -inner, width: inner * 2, height: inner * 2))
-            context.addPath(ring)
-            context.fillPath(using: .evenOdd)
-
-            // Bearings: eight ticks on the card's rim, the compass's readable signature.
+            // One arc per slice, centred on the slice, leaving a gap on each boundary.
+            let halfArc: CGFloat = 14
             context.setStrokeColor(NSColor.black.cgColor)
-            context.setLineWidth(max(1, rect.width * 0.05))
-            for index in 0..<8 {
-                let angle = CGFloat(index) / 8 * 2 * .pi
-                context.move(to: CGPoint(
-                    x: (inner + rect.width * 0.03) * sin(angle),
-                    y: -(inner + rect.width * 0.03) * cos(angle)
-                ))
-                context.addLine(to: CGPoint(
-                    x: (outer - rect.width * 0.03) * sin(angle),
-                    y: -(outer - rect.width * 0.03) * cos(angle)
-                ))
+            context.setLineWidth(5 * unit)
+            context.setLineCap(.butt)
+            for slice in 0..<9 {
+                let centre = CGFloat(slice) * 40
+                let arc = CGMutablePath()
+                arc.addArc(
+                    center: .zero,
+                    radius: 27 * unit,
+                    startAngle: (centre - halfArc - 90) * .pi / 180,
+                    endAngle: (centre + halfArc - 90) * .pi / 180,
+                    clockwise: false
+                )
+                context.addPath(arc)
             }
             context.strokePath()
 
-            // Needle pointing north, and the hub pin.
-            let tip = CGPoint(x: 0, y: -(outer - rect.width * 0.055))
-            let left = CGPoint(x: -rect.width * 0.055, y: rect.width * 0.10)
-            let right = CGPoint(x: rect.width * 0.055, y: rect.width * 0.10)
+            // Needle: a kite aimed at slice 2.
+            context.setFillColor(NSColor.black.cgColor)
             let needle = CGMutablePath()
-            needle.move(to: tip)
-            needle.addLine(to: left)
-            needle.addLine(to: right)
+            needle.move(to: point(19 * unit, 40))
+            needle.addLine(to: point(6.5 * unit, 130))
+            needle.addLine(to: point(12 * unit, 220))
+            needle.addLine(to: point(6.5 * unit, 310))
             needle.closeSubpath()
             context.addPath(needle)
             context.fillPath()
 
-            context.fillEllipse(in: CGRect(x: -hub, y: -hub, width: hub * 2, height: hub * 2))
             context.restoreGState()
             return true
         }

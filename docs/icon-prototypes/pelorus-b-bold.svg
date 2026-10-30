@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024"><title>Pelorus B - bold</title><defs>
+  <radialGradient id="leather" cx=".35" cy=".25" r="1.0"><stop offset="0" stop-color="#3B2A19"/><stop offset="1" stop-color="#17100A"/></radialGradient>
+  <linearGradient id="brassRing" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#D5C08F"/><stop offset=".28" stop-color="#B39257"/>
+    <stop offset=".6" stop-color="#856637"/><stop offset=".85" stop-color="#5A4325"/><stop offset="1" stop-color="#856637"/></linearGradient>
+  <linearGradient id="brassRev" x1="1" y1="1" x2="0" y2="0">
+    <stop offset="0" stop-color="#D5C08F"/><stop offset=".3" stop-color="#B39257"/>
+    <stop offset=".7" stop-color="#856637"/><stop offset="1" stop-color="#5A4325"/></linearGradient>
+  <linearGradient id="brassBody" x1=".1" y1="0" x2=".9" y2="1">
+    <stop offset="0" stop-color="#D5C08F"/><stop offset=".35" stop-color="#B39257"/>
+    <stop offset=".75" stop-color="#856637"/><stop offset="1" stop-color="#5A4325"/></linearGradient>
+  <radialGradient id="card" cx=".42" cy=".38" r=".75">
+    <stop offset="0" stop-color="#E0D1B1"/><stop offset=".68" stop-color="#DCCDAA"/>
+    <stop offset=".93" stop-color="#BDA87E"/><stop offset="1" stop-color="#877049"/></radialGradient>
+  <radialGradient id="hub" cx=".38" cy=".32" r=".8"><stop offset="0" stop-color="#D5C08F"/><stop offset=".5" stop-color="#856637"/><stop offset="1" stop-color="#5A4325"/></radialGradient>
+  <radialGradient id="dome" cx=".36" cy=".3" r=".85"><stop offset="0" stop-color="#D5C08F"/><stop offset=".45" stop-color="#B39257"/><stop offset="1" stop-color="#856637"/></radialGradient>
+  <linearGradient id="gloss" x1="0" y1="0" x2=".7" y2=".8"><stop offset="0" stop-color="#fff" stop-opacity=".20"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient>
+  <filter id="drop" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="22" stdDeviation="24" flood-color="#000" flood-opacity=".55"/></filter>
+  <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="6" stdDeviation="7" flood-color="#000" flood-opacity=".45"/></filter>
+</defs><clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="188"/></clipPath><g clip-path="url(#tile)"><rect x="100" y="100" width="824" height="824" rx="188" fill="url(#leather)"/><rect x="101.5" y="101.5" width="821" height="821" rx="187" fill="none" stroke="#fff" stroke-opacity=".10" stroke-width="3"/>
+<g filter="url(#drop)">
+  <circle cx="512" cy="512" r="392" fill="url(#brassRing)" stroke="#2F2717" stroke-width="4"/>
+  <circle cx="512" cy="512" r="352" fill="url(#brassRev)" stroke="#2F2717" stroke-width="4"/>
+  <circle cx="512" cy="512" r="332" fill="url(#card)" stroke="#877049" stroke-width="4"/>
+</g>
+<path d="M512.0,512.0 L625.6,200.0 A332 332 0 0 1 799.5,346.0 L512.0,512.0 A0 0 0 0 0 512.0,512.0 Z" fill="#8F3322" fill-opacity=".22"/>
+<path d="M542.8,427.4 L621.4,211.3 M589.9,467.0 L789.1,352.0 M600.6,527.6 L827.1,567.6 M569.9,580.9 L717.7,757.1 M512.0,602.0 L512.0,832.0 M454.1,580.9 L306.3,757.1 M423.4,527.6 L196.9,567.6 M434.1,467.0 L234.9,352.0 M481.2,427.4 L402.6,211.3 " stroke="#3A2C1A" stroke-width="10" stroke-linecap="round" opacity="0.55" fill="none"/>
+<circle cx="512" cy="512" r="332" fill="url(#gloss)"/>
+<g filter="url(#soft)"><g transform="rotate(40 512 512)">
+      <path d="M512,212 L570,512 L512,512 Z" fill="#8F3322"/>
+      <path d="M512,212 L454,512 L512,512 Z" fill="#B44437"/>
+      <path d="M512,712 L570,512 L512,512 Z" fill="#2F2717"/>
+      <path d="M512,712 L454,512 L512,512 Z" fill="#5A4325"/>
+      <path d="M512,212 L570,512 L512,712 L454,512 Z" fill="none" stroke="#2F2717" stroke-opacity=".55" stroke-width="3" stroke-linejoin="round"/>
+    </g><circle cx="512" cy="512" r="68" fill="url(#hub)" stroke="#2F2717" stroke-width="4"/>
+    <circle cx="512" cy="512" r="50.3" fill="none" stroke="#2F2717" stroke-opacity=".45" stroke-width="2.5"/>
+    <circle cx="512" cy="512" r="35.4" fill="url(#dome)" stroke="#5A4325" stroke-opacity=".8" stroke-width="2.5"/></g>
+</g></svg>
