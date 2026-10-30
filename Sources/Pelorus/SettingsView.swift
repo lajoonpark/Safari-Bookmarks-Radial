@@ -324,7 +324,7 @@ struct SettingsView: View {
             Text("Nine slots per page. 1–9 opens one, ← → turns the page, Esc closes.")
                 .font(Palette.display(13.5, .regular))
                 .foregroundStyle(Palette.boneFaint)
-            Text("Bookmarks live in ~/Library/Application Support/SafariRadial")
+            Text("Bookmarks live in ~/Library/Application Support/Pelorus")
                 .font(Palette.mono(11))
                 .foregroundStyle(Palette.boneFaint)
                 .textSelection(.enabled)

@@ -147,7 +147,7 @@ enum LaunchAtLogin {
                     try SMAppServiceRegistrar.unregister()
                 }
             } catch {
-                NSLog("SafariRadial: login item update failed: \(error.localizedDescription)")
+                NSLog("Pelorus: login item update failed: \(error.localizedDescription)")
             }
         }
     }

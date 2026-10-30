@@ -105,9 +105,7 @@ public struct Preferences: Codable, Equatable {
     }
 
     public static var defaultFileURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent("SafariRadial/preferences.json")
+        AppSupport.url(for: "preferences.json")
     }
 
     public static func load(from url: URL = Preferences.defaultFileURL) -> Preferences {
@@ -127,7 +125,7 @@ public struct Preferences: Codable, Equatable {
             let data = try JSONEncoder().encode(self)
             try data.write(to: url, options: .atomic)
         } catch {
-            NSLog("SafariRadial: failed to save preferences: \(error.localizedDescription)")
+            NSLog("Pelorus: failed to save preferences: \(error.localizedDescription)")
         }
     }
 }

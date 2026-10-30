@@ -32,9 +32,7 @@ public final class BookmarkStore {
     }
 
     public static var defaultFileURL: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent("SafariRadial/bookmarks.json")
+        AppSupport.url(for: "bookmarks.json")
     }
 
     // MARK: - Loading and saving
@@ -65,7 +63,7 @@ public final class BookmarkStore {
             let data = try encoder.encode(bookmarks)
             try data.write(to: fileURL, options: .atomic)
         } catch {
-            NSLog("SafariRadial: failed to save bookmarks: \(error.localizedDescription)")
+            NSLog("Pelorus: failed to save bookmarks: \(error.localizedDescription)")
         }
     }
 

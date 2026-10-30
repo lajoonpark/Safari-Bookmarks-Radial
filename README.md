@@ -1,8 +1,12 @@
-# Safari Radial
+# Pelorus
 
 A lightweight macOS menu-bar app. Press a shortcut, and your Safari bookmarks appear in a
 radial menu **at your cursor**. Point and click, or just press the number — your hands never
 leave the keys and the cursor never leaves the page.
+
+A *pelorus* is the sighting instrument a navigator uses to take a bearing: point it at the
+thing you want and read off where it is. Same idea here, for your bookmarks. (Formerly
+"Safari Radial".)
 
 ```
         ┌───────────────┐
@@ -82,7 +86,7 @@ So the app:
 - Detects the permission failure specifically and offers a button that opens the right
   settings pane, instead of a generic "couldn't read file".
 - Never blocks on it. You can add and manage bookmarks entirely by hand, and the app's own
-  store (`~/Library/Application Support/SafariRadial/bookmarks.json`) is the source of
+  store (`~/Library/Application Support/Pelorus/bookmarks.json`) is the source of
   truth. Safari is an import source, not a live dependency.
 - Skips the Reading List (those are "leaves" too, but not bookmarks you'd want in a radial).
 
@@ -126,8 +130,14 @@ swift test              # unit tests for the portable core
 ./scripts/build.sh --run
 ```
 
-`build.sh` compiles, assembles `build/SafariRadial.app` with an `Info.plist`
+`build.sh` compiles, assembles `build/Pelorus.app` with an `Info.plist`
 (`LSUIElement`, so no Dock icon), and ad-hoc signs it. `--install` copies to `/Applications`.
+
+**Coming from Safari Radial?** The app's data folder moved from `SafariRadial` to `Pelorus`.
+The first launch copies your slots and settings across and leaves the old folder untouched, so
+it is safe to delete once you are happy. The bundle ID changed too, so macOS treats this as a
+new app: grant Full Disk Access again, turn "Open at login" off and on once, and remove the old
+`SafariRadial.app` (and its entries under Full Disk Access and Login Items).
 
 First run:
 
@@ -140,7 +150,7 @@ First run:
   <img src="docs/screenshots/onboarding.webp" alt="The first-run tour" width="760">
 </p>
 
-If you'd rather build in Xcode: `open Package.swift`, select the `SafariRadial` scheme, run.
+If you'd rather build in Xcode: `open Package.swift`, select the `Pelorus` scheme, run.
 Note that running from Xcode/`swift run` gives you an unsigned binary, which macOS treats as
 a different app for TCC purposes — grant Full Disk Access to the built `.app` rather than to
 Xcode's runner.
@@ -158,7 +168,7 @@ Sources/
     HotkeyConflicts.swift    warns when a shortcut shadows a system one
     Bookmark.swift           URL normalisation, display fallbacks
     Preferences.swift        settings
-  SafariRadial/          the macOS app
+  Pelorus/          the macOS app
     main.swift               NSApplication bootstrap
     AppDelegate.swift        menu bar item, windows, wiring
     GlobalHotkey.swift       Carbon RegisterEventHotKey (no Accessibility prompt)
