@@ -161,6 +161,15 @@ slice, widens its wedge, brightens its gradient, and rotates the centre ✕ 45°
 pushes the slice inward. The frame driver stops entirely when nothing is moving, so the app
 is idle when the menu is closed.
 
+The lid is the one thing that is not a spring. It is a brass pan with a milled wall, a shoulder,
+a cover on the outside and an engraved plate on the inside, hung on a hinge pin, and it is
+animated by a small physical model (`RadialCore/LidHinge.swift`): it is flicked, slows as it goes
+over the top, falls onto its stop with a little bounce that taps the case, and is pushed shut
+on the way out. Because it is a real mesh swung on a real pivot, it shows its cover, turns
+edge-on and shows its inside as it opens, and the pointer cannot reach the card until it has
+cleared. `preview/compass-preview.html` renders the same lid in a browser (`?freeze=deg`,
+`?at=ms` and `?closeat=ms` capture single frames of it).
+
 The animations are springs integrated per frame rather than `NSAnimationContext` curves,
 because the menu must respond to a pointer that can change its mind mid-animation: hovering
 a second slice retargets the spring from its current value and velocity, with no restart and

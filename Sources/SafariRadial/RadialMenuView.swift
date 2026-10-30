@@ -45,20 +45,16 @@ final class RadialMenuView: NSView {
     /// tracking the cursor rigidly.
     private var tiltPitch = SpringValue(0, stiffness: 170, damping: 26)
     private var tiltRoll = SpringValue(0, stiffness: 170, damping: 26)
-    /// How far the lid has swung.
+    /// The lid, on its hinge: a small physical model, not a spring (see `LidHinge`).
     ///
-    /// The lid leads the opening and lands before the box does: it clears the card (0.55 open)
-    /// by ~75ms and has reached 98% by ~180ms, while the box reaches 98% by ~240ms. It is
-    /// lightly underdamped, so it overshoots by about 3%, but `CompassLid` clamps that overshoot
-    /// and the lid lands on its stop and holds. The spring itself is within 1% of rest by ~370ms.
+    /// It is flicked on the very first frame, clears the card (0.55 open) by ~135ms, goes over
+    /// vertical, falls onto its stop at ~290ms and gives one small bounce, and is at rest by
+    /// ~520ms. The box finishes rising by ~250ms, so the stop lands just as the case settles: the
+    /// two read as one gesture, and the lid is never behind the box. Closing is a push, and the
+    /// lid is shut by ~175ms, before the box is gone at ~200ms.
     ///
-    /// That order is what keeps the opening from reading as "appears, then pauses, then flips":
-    /// the lid is never behind the box. The kick in `present()` puts it under way on the very
-    /// first frame, so there is no dead time before anything is visible.
-    ///
-    /// These are the opening constants. `present()` restores them, and `dismiss(animated:)`
-    /// swaps in the closing ones, which shut the lid by ~150ms, before the box is gone at ~200ms.
-    private var lidOpen = SpringValue(0, stiffness: 260, damping: 24)
+    /// The stop is also what the hand feels: `advance` turns each landing into a tap on the case.
+    private var hinge = LidHinge()
     /// Set once the sweep has been released, so the opening beat only ever plays one time.
     private var sweepStarted = false
     /// The needle is held counter-clockwise of its aim until the card is reachable, so it swings onto
@@ -131,8 +127,13 @@ final class RadialMenuView: NSView {
     private var camera: CompassCamera { CompassCamera(tilt: tilt) }
 
     private var lid: CompassLid {
-        CompassLid(metrics: metrics, openness: CGFloat(lidOpen.value))
+        CompassLid(metrics: metrics, openness: CGFloat(hinge.openness))
     }
+
+    /// How hard a landing on the lid's stop taps the case, in tilt velocity per unit of impact
+    /// speed. A landing at the usual 5.5 rad/s tips the case about a degree, and the tilt spring
+    /// settles it back.
+    private static let stopTapTilt: Double = 0.12
 
     /// Whether the pointer may act on the card yet.
     ///
@@ -211,21 +212,20 @@ final class RadialMenuView: NSView {
         // again here every time.
         openProgress.stiffness = 300
         openProgress.damping = 30
-        lidOpen.stiffness = 260
-        lidOpen.damping = 24
 
         if reversing {
             // Nothing is snapped or kicked. A sweep that finished stays finished, a sweep that had not
-            // started starts through its usual gate, and the needle keeps the state it is in.
+            // started starts through its usual gate, and the needle keeps the state it is in. The
+            // lid is flicked open from wherever it is, with enough speed to clear vertical.
             openProgress.target = 1
-            lidOpen.target = 1
+            hinge.release()
             beginAnimating()
             return
         }
 
         openProgress.snap(to: 0)
         sweepProgress.snap(to: 0)
-        lidOpen.snap(to: 0)
+        hinge.snapShut()
         sweepStarted = false
         needle.stiffness = 300
         needle.damping = 26
@@ -236,14 +236,12 @@ final class RadialMenuView: NSView {
         // now revealed by the lid's own angle (`printProgress`), so the two cannot desynchronise
         // and there is nothing to wait for.
         openProgress.target = 1
-        lidOpen.target = 1
-        // Both springs are kicked rather than released from rest. A spring at rest spends its
-        // first frames accelerating from zero, and because the shut lid projects to very nearly
-        // nothing for the first ~40° of its swing, those frames look like the box appearing and
-        // then pausing before anything flips. Launching the lid already moving makes the box
-        // and the lid leave together, in one gesture.
+        // The box is kicked rather than released from rest. A spring at rest spends its first
+        // frames accelerating from zero, which reads as the box appearing and then pausing before
+        // anything flips. The lid needs no kick: the latch lets go with a pop on the first frame,
+        // so the box and the lid leave together, in one gesture.
         openProgress.kick(velocity: 6)
-        lidOpen.kick(velocity: 6)
+        hinge.release()
         needle.snap(to: Double(ringLayout.centerAngle(of: 0)))
         primeHoverFromPointer()
         // Park the needle under the lid. The aim (the target) is kept, and only the value is moved
@@ -266,7 +264,9 @@ final class RadialMenuView: NSView {
     /// the lid still hides the card costs nothing — the lid is painted over everything until it
     /// swings clear — and finishing near the lid's landing lets the print resolve with it.
     private var printProgress: Double {
-        let reveal = (Double(lidOpen.value) - 0.12) / 0.74
+        // Saturates at 0.74 open (about 89°), so the lid's bounce on its stop, which only moves it
+        // a few degrees, cannot make the print flicker.
+        let reveal = (hinge.openness - 0.12) / 0.62
         return min(1, max(0, reveal))
     }
 
@@ -313,14 +313,12 @@ final class RadialMenuView: NSView {
             // threshold decisively instead of easing into it.
             openProgress.stiffness = 380
             openProgress.damping = 34
-            lidOpen.stiffness = 520
-            lidOpen.damping = 40
             openProgress.target = -0.06
-            lidOpen.target = -0.08
+            hinge.shut()
             beginAnimating()
         } else {
             openProgress.snap(to: 0)
-            lidOpen.snap(to: 0)
+            hinge.snapShut()
             closeCompletion = nil
             isClosing = false
             completion?()
@@ -375,7 +373,12 @@ final class RadialMenuView: NSView {
         if !needleParked { needle.step(dt) }
         tiltPitch.step(dt)
         tiltRoll.step(dt)
-        lidOpen.step(dt)
+        // The lid's landing on a stop taps the case. Only the opening one is felt: the closing one
+        // happens as the box is already going.
+        let landing = hinge.step(dt)
+        if landing > 0, !isClosing {
+            tiltPitch.impulse(landing * RadialMenuView.stopTapTilt)
+        }
 
         // The sweep is part of the opening gesture, not a separate beat: it fires the moment
         // the card is revealed behind the lid, so the print, the needle of light and the lid
@@ -402,7 +405,7 @@ final class RadialMenuView: NSView {
         if openProgress.isAnimating || sweepProgress.isAnimating
             || hubHover.isAnimating || hubPress.isAnimating || pageSwap.isAnimating
             || (needle.isAnimating && !needleParked)
-            || tiltPitch.isAnimating || tiltRoll.isAnimating || lidOpen.isAnimating {
+            || tiltPitch.isAnimating || tiltRoll.isAnimating || hinge.isMoving {
             moving = true
         }
 
@@ -426,7 +429,7 @@ final class RadialMenuView: NSView {
                 // Park both springs at rest, so the ticker has nothing in flight and a later
                 // wake-up cannot carry them on toward their below-zero targets.
                 openProgress.snap(to: 0)
-                lidOpen.snap(to: 0)
+                hinge.snapShut()
                 isClosing = false
                 let completion = closeCompletion
                 closeCompletion = nil

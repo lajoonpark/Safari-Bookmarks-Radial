@@ -62,9 +62,9 @@ final class RadialController {
         let screen = ScreenGeometry.activeScreen()
         let pointer = ScreenGeometry.pointerInView(screen)
 
-        // An open compass is a tall object: the lid stands a full diameter above the hinge and
-        // the lanyard bow hangs below, so it needs a little over 4 card-radii of height against
-        // the old dial's 1.1. The radius setting is an upper bound, not a promise — fitting it to the
+        // An open compass is a tall object: the lid, a pan with real depth, stands a full diameter
+        // above the hinge and the lanyard bow hangs below, so it needs about 4.4 card-radii of
+        // height against the old dial's 1.1. The radius setting is an upper bound, not a promise — fitting it to the
         // screen beats hanging the lid off the edge, and `fitted(toHeight:)` keeps its own floor
         // so the numerals stay readable.
         let available = screen.frame.height - 24
