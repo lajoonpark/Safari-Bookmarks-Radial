@@ -40,7 +40,7 @@ final class CompassRenderer {
         var pageAlpha: Double
     }
 
-    private let grain = CompassGrain()
+    let grain = CompassGrain()
 
     func draw(_ state: State, in context: CGContext, at centre: CGPoint) {
         let m = state.metrics
@@ -727,6 +727,8 @@ extension CompassRenderer {
                      colour: CompassTheme.patina, alpha: CompassTheme.wearGain * 0.45, in: context)
         }
 
+        drawLidCoverWear(unit: radius, map: { lidFlat(-$0.x, $0.y) }, in: context)
+
         // The cover rolls over into its shoulder.
         if let vignette = CGGradient(
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
@@ -911,6 +913,7 @@ extension CompassRenderer {
             drawWear(spot, at: lidFlat(spot.x * radius, spot.y * radius), unit: radius,
                      colour: CompassTheme.rust, alpha: CompassTheme.wearGain, in: context)
         }
+        drawLidFloorWear(unit: radius, map: { lidFlat($0.x, $0.y) }, in: context)
         context.restoreGState()
     }
 }
@@ -1176,6 +1179,7 @@ extension CompassRenderer {
         drawBuffMarks(in: context, state: state, metrics: metrics)
         drawTarnishBand(in: context, state: state, metrics: metrics)
         drawReeding(in: context, state: state, metrics: metrics)
+        drawCaseWear(in: context, state: state, metrics: metrics)
 
         context.restoreGState()
 
@@ -1390,6 +1394,7 @@ extension CompassRenderer {
             )
         }
         stroke(highlight, context, NSColor.white.withAlphaComponent(0.40), width: 1.1)
+        drawLugWear(in: context, state: state, metrics: metrics, z: z)
         context.restoreGState()
     }
 
@@ -1463,6 +1468,8 @@ extension CompassRenderer {
             context.restoreGState()
         }
 
+        drawHingeWear(in: context, state: state, metrics: metrics)
+
         // The pin's end caps.
         for sign in [CGFloat(-1), CGFloat(1)] {
             let end = state.camera.project(Point3D(x: sign * (span + gap), y: y, z: z))
@@ -1519,6 +1526,7 @@ extension CompassRenderer {
         grain.fill(in: context, scale: radius)
         drawRubRing(in: context, metrics: metrics)
         drawAgeing(in: context, state: state, metrics: metrics)
+        drawCardWear(in: context, state: state, metrics: metrics)
         drawSeatGrime(in: context, state: state, metrics: metrics)
         context.restoreGState()
 

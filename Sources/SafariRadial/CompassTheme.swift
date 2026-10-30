@@ -27,6 +27,14 @@ enum CompassTheme {
     /// what ships.
     static let wearGain: CGFloat = 1.3
 
+    /// How strongly the hard-edged marks read: scratches, dents, chips, rust pits, creases.
+    ///
+    /// Separate from `wearGain` because the two kinds of wear fail differently. Soft blots turned
+    /// up become a stain; sharp marks turned up become damage. Keeping them apart means the
+    /// tonal ageing and the scars can be tuned independently. 1 is a compass that has been
+    /// carried and used; past about 1.6 it starts to look dropped.
+    static let damageGain: CGFloat = 1.0
+
     // MARK: - Paper
 
     /// The card itself. Aged cream, never white: white paper reads as a new print.

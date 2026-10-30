@@ -262,6 +262,7 @@ extension CompassRenderer {
                 options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
             )
         }
+        drawNeedleWear(in: context, at: { at($0, $1) }, tip: tip, halfWidth: halfWidth)
         context.restoreGState()
 
         context.saveGState()
@@ -443,6 +444,7 @@ extension CompassRenderer {
             context.resetClip()
         }
         context.restoreGState()
+        drawHubWear(in: context, state: state, metrics: metrics, boss: boss)
 
         context.saveGState()
         context.addPath(boss)
