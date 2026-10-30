@@ -1096,19 +1096,14 @@ final class CompassLidTests: XCTestCase {
 
     /// The lid must not lag the case, whether it is opening or closing.
     ///
-    /// This is the shape of the "⌘E appears, pauses, then flips the lid" complaint. The lid's
-    /// spring used to settle in ~410ms against the case's ~110ms, so the box landed, sat still,
-    /// and only then did the lid swing. Geometry alone cannot catch that: both poses are valid,
-    /// it is the *timing* that reads as a stutter. Simulating the two springs here pins the
-    /// relationship instead of the absolute numbers, so tuning either one stays legal as long as
-    /// the lid does not fall behind again. Closing runs the other way round: the lid has to be
-    /// shut before the box is gone, or the case vanishes with the lid still in the air.
+    /// This is the shape of the "⌘E appears, pauses, then flips the lid" complaint. Geometry alone
+    /// cannot catch it: both poses are valid, it is the *timing* that reads as a stutter. The lid
+    /// is a `LidHinge` now, flicked on the first frame, so it never waits for the box; what has to
+    /// be pinned is that it also does not run on long after the box has landed, and that the card
+    /// is reachable by the time the box is mostly up. Closing runs the other way round: the lid
+    /// has to be shut before the box is gone, or the case vanishes with the lid still in the air.
     func testLidDoesNotFallBehindTheCaseItSitsIn() {
-        /// Time to cross `threshold` on the way from `start` to `target`. The threshold, not the
-        /// point of rest: every spring spends most of its life in the last few percent of its
-        /// travel, so measuring rest made all of them come out at the same half-second and the
-        /// assertion could not tell a good tuning from a bad one. Opening is measured at 98%,
-        /// which is the time to *look* open.
+        /// Time for a spring to cross `threshold`, stepped at the same rate as the hinge below.
         func timeTo(_ threshold: Double, from start: Double = 0, target: Double = 1,
                     stiffness: Double, damping: Double, kick: Double = 0) -> Double {
             var value = start, speed = kick, time = 0.0
@@ -1123,49 +1118,61 @@ final class CompassLidTests: XCTestCase {
             }
             return time
         }
-        let caseOpen = timeTo(0.98, stiffness: 300, damping: 30, kick: 6)
-        let lidOpen = timeTo(0.98, stiffness: 260, damping: 24, kick: 6)
-        XCTAssertLessThan(lidOpen, caseOpen,
-                          "the lid must land before the case finishes moving, not long after it")
-        // And it has to be genuinely quick, but not rushed. This used to allow a quarter of a
-        // second, which the first pass spent entirely on the case: the whole gesture read as two
-        // beats because the box slid into place and only then did anything else happen. The lid
-        // now reaches 98% at ~180ms and the case at ~240ms, so both ends sit inside one beat. (The
-        // app's springs sub-step at 240Hz; this loop steps at 120Hz and reads about 10ms later.)
-        // The lower bound keeps the lid from being tuned back into a flick.
-        XCTAssertGreaterThan(lidOpen, 0.15)
-        XCTAssertLessThan(lidOpen, 0.22)
-        XCTAssertLessThan(caseOpen, 0.28)
-        // The card only opens once the lid has cleared it at 0.55, and by then the box should be at
-        // least half risen, so a click cannot land on a slice the user has not seen come up. Both
-        // springs are stepped together here, so the two readings are taken at the same instant.
         let frame = 1.0 / 120
+
+        // Opening: the box and the hinge are stepped together, so both readings are taken at the
+        // same instant.
         var box = (value: 0.0, speed: 6.0)
-        var lidState = (value: 0.0, speed: 6.0)
+        var hinge = LidHinge()
+        hinge.release()
         var time = 0.0
         var cleared: (time: Double, box: Double)?
-        while cleared == nil, time < 2 {
+        var landed: Double?
+        while time < 2, cleared == nil || landed == nil {
             box.speed += (300 * (1 - box.value) - 30 * box.speed) * frame
             box.value += box.speed * frame
-            lidState.speed += (260 * (1 - lidState.value) - 24 * lidState.speed) * frame
-            lidState.value += lidState.speed * frame
+            hinge.step(frame)
             time += frame
-            if CompassLid(metrics: metrics, openness: CGFloat(lidState.value)).revealsCard {
+            if cleared == nil, CompassLid(metrics: metrics, openness: CGFloat(hinge.openness)).revealsCard {
                 cleared = (time, box.value)
             }
+            if landed == nil, hinge.impact > 0 { landed = time }
         }
-        guard let reached = cleared else {
-            XCTFail("the lid never clears the card")
+        guard let reached = cleared, let landing = landed else {
+            XCTFail("the lid never cleared the card or never landed")
             return
         }
-        XCTAssertGreaterThanOrEqual(reached.time, 0.06, "the lid should not clear the card before about 60ms")
-        XCTAssertLessThanOrEqual(reached.time, 0.10, "the lid should clear the card by about 100ms")
+        // The card opens at ~135ms, with the box well up, so a click cannot land on a slice the user
+        // has not seen come up. Not so early that it is a flick, not so late that the box has long
+        // since stopped.
+        XCTAssertGreaterThanOrEqual(reached.time, 0.08, "the lid should not clear the card in a flick")
+        XCTAssertLessThanOrEqual(reached.time, 0.20, "the lid should clear the card by about 150ms")
         XCTAssertGreaterThanOrEqual(reached.box, 0.5, "the box should be at least half risen when the card opens")
-        // Closing has no kick: the lid must be shut (2% of travel) before the box is gone (zero).
-        let lidShut = timeTo(0.02, from: 1, target: -0.08, stiffness: 520, damping: 40)
+        // The lid lands on its stop as the case settles: the stop is felt as a tap on the box, so it
+        // has to arrive while the box is still finishing, not a beat after it.
+        let boxSettled = timeTo(0.98, stiffness: 300, damping: 30, kick: 6)
+        XCTAssertEqual(landing, boxSettled, accuracy: 0.10,
+                       "the lid should land as the box settles, as one gesture")
+        XCTAssertLessThan(landing, 0.40, "and the whole opening should still be one beat")
+
+        // Closing has no kick: the lid must be shut before the box is gone (zero).
+        var closing = LidHinge()
+        closing.release()
+        while !(closing.angle == closing.stop) && time < 4 {
+            closing.step(frame)
+            time += frame
+        }
+        closing.shut()
+        var lidShut: Double?
+        var shutTime = 0.0
+        while shutTime < 1, lidShut == nil {
+            closing.step(frame)
+            shutTime += frame
+            if closing.openness <= 0.02 { lidShut = shutTime }
+        }
         let caseGone = timeTo(0, from: 1, target: -0.06, stiffness: 380, damping: 34)
-        XCTAssertLessThan(lidShut, caseGone,
-                          "the lid must be shut before the box is gone")
+        XCTAssertNotNil(lidShut)
+        XCTAssertLessThan(lidShut ?? 9, caseGone, "the lid must be shut before the box is gone")
     }
 
     func testOpennessIsClampedToTheAnglesWeSupport() {
@@ -1178,5 +1185,285 @@ final class CompassLidTests: XCTestCase {
         XCTAssertFalse(CompassLid(metrics: metrics, openness: 0.2).revealsCard)
         XCTAssertFalse(CompassLid(metrics: metrics, openness: 0.5).revealsCard)
         XCTAssertTrue(CompassLid(metrics: metrics, openness: 1).revealsCard)
+    }
+
+    // MARK: The pan
+
+    /// The lid is a shallow pan, not a plate: every dimension of its mesh has to nest.
+    func testTheLidIsAPanWithAWallAFloorAndACover() {
+        XCTAssertGreaterThan(metrics.lidDepth, 0)
+        XCTAssertLessThan(metrics.lidFloorRadius, metrics.lidRadius, "the wall has thickness")
+        XCTAssertLessThan(metrics.lidCoverRadius, metrics.lidRadius, "the shoulder rolls inward")
+        XCTAssertGreaterThan(metrics.lidFloorHeight, 0)
+        XCTAssertLessThan(metrics.lidFloorHeight, metrics.lidDepth, "the plate is under the cover")
+        XCTAssertGreaterThan(metrics.lidShoulderHeight, 0)
+        XCTAssertLessThan(metrics.lidShoulderHeight, metrics.lidDepth, "the shoulder is above the straight wall")
+        XCTAssertGreaterThan(metrics.lidFloorRadius, metrics.cardRadius,
+                             "the engraved plate is wide enough to cover the card it closes over")
+    }
+
+    /// A pan proportioned like a real one: shallow against its own diameter, and not a plate.
+    func testTheLidIsShallowButNotPaperThin() {
+        let ratio = metrics.lidDepth / (metrics.lidRadius * 2)
+        XCTAssertGreaterThan(ratio, 0.03, "thinner than this is the flat disc this replaced")
+        XCTAssertLessThan(ratio, 0.12, "deeper than this is a tin, not a lid")
+    }
+
+    /// The shut lid's rim rests on the case's crest, and the hinge pin is at that height: the lid
+    /// is *on* the case, not floating a hair above it or sunk into it.
+    func testTheShutLidRestsOnTheCasesCrest() {
+        let lid = CompassLid(metrics: metrics, openness: 0)
+        XCTAssertEqual(lid.hingeZ, metrics.cardDepth, accuracy: 1e-9)
+        XCTAssertEqual(lid.point(radius: 50, angle: 1).z, lid.hingeZ, accuracy: 1e-9)
+        XCTAssertEqual(lid.point(radius: 50, angle: 1, height: metrics.lidDepth).z,
+                       lid.hingeZ + metrics.lidDepth, accuracy: 1e-9)
+    }
+
+    /// Directions turn with the lid, which is what lets a renderer light it: the cover's normal
+    /// points at the viewer when shut, straight up the screen when the lid is vertical, and away
+    /// from the viewer when it is open, so the *inside* is what faces the camera.
+    func testNormalsTurnWithTheLid() {
+        let up = Point3D(x: 0, y: 0, z: 1)
+        let shut = CompassLid(metrics: metrics, openness: 0).swingDirection(up)
+        XCTAssertEqual(shut.z, 1, accuracy: 1e-9)
+
+        let vertical = CompassLid(metrics: metrics, openness: (.pi / 2) / CompassMetrics.lidOpenAngle)
+            .swingDirection(up)
+        XCTAssertEqual(vertical.y, -1, accuracy: 1e-9, "standing up, the cover faces up the screen")
+        XCTAssertEqual(vertical.z, 0, accuracy: 1e-9)
+
+        let open = CompassLid(metrics: metrics, openness: 1).swingDirection(up)
+        XCTAssertLessThan(open.z, 0, "open, the cover faces away from the viewer and the inside faces them")
+        XCTAssertEqual(open.x * open.x + open.y * open.y + open.z * open.z, 1, accuracy: 1e-9,
+                       "a rotation keeps a direction a unit length")
+    }
+
+    /// The pan has depth, so its highest point is the cover's edge. A reach that measured the rim
+    /// only would put the open lid's top above the layout's margin, which is how the old flat
+    /// disc used to be clipped by the top of the screen.
+    func testTheReachCountsTheCoverNotJustTheRim() {
+        let camera = CompassCamera(eyeDistance: metrics.cardRadius * RadialTilt.eyeDistanceRatio)
+        let lid = CompassLid(metrics: metrics, openness: 1)
+        var rimOnly: CGFloat = 0
+        for step in 0...48 {
+            let angle = CGFloat(step) / 48 * 2 * .pi
+            let point = camera.project(lid.swing(lid.point(radius: metrics.lidRadius, angle: angle))).point
+            rimOnly = max(rimOnly, -point.y)
+        }
+        XCTAssertGreaterThan(metrics.lidReach(), rimOnly, "the cover's edge stands higher than the rim")
+        XCTAssertLessThan(metrics.lidReach(), rimOnly * 1.2, "but only by the depth of the pan")
+    }
+}
+
+final class LidHingeTests: XCTestCase {
+
+    private let frame = 1.0 / 120
+
+    private struct Flight {
+        var clearedCard: Double?
+        var firstImpact: (time: Double, speed: Double)?
+        /// How far short of the stop the lid fell back after its first landing, in radians.
+        var rebound = 0.0
+        var restedAt: Double?
+        var lowest = Double.infinity
+        var highest = -Double.infinity
+    }
+
+    /// Runs `hinge` forward and records what it did.
+    private func fly(_ hinge: inout LidHinge, seconds: Double = 1.5) -> Flight {
+        var flight = Flight()
+        var time = 0.0
+        while time < seconds {
+            hinge.step(frame)
+            time += frame
+            flight.lowest = min(flight.lowest, hinge.angle)
+            flight.highest = max(flight.highest, hinge.angle)
+            if flight.clearedCard == nil, hinge.openness > 0.55 { flight.clearedCard = time }
+            if flight.firstImpact == nil, hinge.impact > 0 { flight.firstImpact = (time, hinge.impact) }
+            if flight.firstImpact != nil { flight.rebound = max(flight.rebound, hinge.stop - hinge.angle) }
+            if flight.restedAt == nil, hinge.mode == .resting { flight.restedAt = time }
+        }
+        return flight
+    }
+
+    func testTheDefaultStopIsTheMetricsOpenAngle() {
+        XCTAssertEqual(LidHinge.defaultStop, Double(CompassMetrics.lidOpenAngle), accuracy: 1e-12)
+    }
+
+    func testItStartsShutAndStill() {
+        let hinge = LidHinge()
+        XCTAssertEqual(hinge.angle, 0)
+        XCTAssertEqual(hinge.openness, 0)
+        XCTAssertFalse(hinge.isMoving)
+    }
+
+    /// Nothing is in flight until it is asked to move, so an idle compass costs no frames.
+    func testARestingHingeDoesNotMove() {
+        var hinge = LidHinge()
+        for _ in 0..<60 { hinge.step(frame) }
+        XCTAssertEqual(hinge.angle, 0)
+        XCTAssertEqual(hinge.impact, 0)
+    }
+
+    /// The gesture, in numbers: clears the card in about 135ms, falls onto its stop at about 290ms
+    /// at a few radians a second, gives one small bounce and is at rest by about half a second.
+    /// The bounds are wide enough for tuning and narrow enough that a spring-like creep (no
+    /// landing) or a rattle (many bounces) fails.
+    func testOpeningIsOneWeightyGesture() {
+        var hinge = LidHinge()
+        hinge.release()
+        XCTAssertTrue(hinge.isMoving)
+        let flight = fly(&hinge)
+
+        XCTAssertEqual(hinge.angle, hinge.stop, "it ends on the stop")
+        XCTAssertEqual(hinge.mode, .resting)
+
+        let cleared = flight.clearedCard ?? 9
+        XCTAssertGreaterThan(cleared, 0.08)
+        XCTAssertLessThan(cleared, 0.20)
+
+        guard let impact = flight.firstImpact else { return XCTFail("the lid never landed on its stop") }
+        XCTAssertGreaterThan(impact.time, 0.22, "it should swing, not snap")
+        XCTAssertLessThan(impact.time, 0.40)
+        XCTAssertGreaterThan(impact.speed, 3, "it lands with weight")
+        XCTAssertLessThan(impact.speed, 9, "but does not slam")
+
+        XCTAssertGreaterThan(flight.rebound, 0.02, "there is a little bounce to see")
+        XCTAssertLessThan(flight.rebound, 0.25, "and it is a little one")
+        XCTAssertLessThan(flight.restedAt ?? 9, 0.8, "and it settles")
+    }
+
+    /// The point of a hinge stop: the lid never goes through it, and never through the case.
+    func testItNeverLeavesItsTravel() {
+        var hinge = LidHinge()
+        hinge.release()
+        var flight = fly(&hinge)
+        XCTAssertLessThanOrEqual(flight.highest, hinge.stop)
+        XCTAssertGreaterThanOrEqual(flight.lowest, 0)
+        hinge.shut()
+        flight = fly(&hinge)
+        XCTAssertLessThanOrEqual(flight.highest, hinge.stop)
+        XCTAssertGreaterThanOrEqual(flight.lowest, 0)
+    }
+
+    /// A landing is reported for exactly one step, and only a real landing counts: resting contact
+    /// against the stop (gravity pressing the lid onto it) is not an impact.
+    func testImpactIsReportedOnlyForRealLandings() {
+        var hinge = LidHinge()
+        hinge.release()
+        var landings = 0
+        var time = 0.0
+        while time < 1.5 {
+            hinge.step(frame)
+            time += frame
+            if hinge.impact > 0 { landings += 1 }
+        }
+        XCTAssertGreaterThanOrEqual(landings, 1)
+        XCTAssertLessThanOrEqual(landings, 3, "a bounce or two, not a rattle")
+        XCTAssertEqual(hinge.impact, 0, "and nothing once it is at rest")
+    }
+
+    /// The failure this model had to be built around: a lid that is released when it is partly open
+    /// and stalls before vertical falls back shut under gravity, so the compass would open and
+    /// then close on its own. Whatever it was doing, a release must end with the lid on the open stop.
+    /// The cases are real reversals: opened for a while, pushed shut for a while, then released.
+    func testAReleaseAlwaysEndsOpen() {
+        for openFrames in stride(from: 0, to: 80, by: 3) {
+            for closeFrames in stride(from: 0, to: 40, by: 3) {
+                var hinge = LidHinge()
+                hinge.release()
+                for _ in 0..<openFrames { hinge.step(frame) }
+                hinge.shut()
+                for _ in 0..<closeFrames { hinge.step(frame) }
+                hinge.release()
+                _ = fly(&hinge)
+                XCTAssertEqual(hinge.angle, hinge.stop,
+                               "stalled after \(openFrames) frames open, \(closeFrames) frames closing")
+                XCTAssertEqual(hinge.mode, .resting)
+            }
+        }
+    }
+
+    /// A hard launch must not bounce the lid back below vertical, where gravity would shut it.
+    func testTheReboundNeverCarriesItBackBelowVertical() {
+        for openFrames in stride(from: 0, to: 40, by: 2) {
+            var hinge = LidHinge()
+            hinge.release()
+            for _ in 0..<openFrames { hinge.step(frame) }
+            hinge.shut()
+            hinge.step(frame)
+            hinge.release()
+            var time = 0.0
+            var afterLanding = false
+            while time < 1.5 {
+                hinge.step(frame)
+                time += frame
+                if hinge.impact > 0 { afterLanding = true }
+                if afterLanding {
+                    XCTAssertGreaterThan(hinge.angle, .pi / 2 + 0.1,
+                                         "after landing it must stay clear of vertical")
+                }
+            }
+        }
+    }
+
+    /// Closing is quick and ends on the case with a small clack.
+    func testClosingIsQuickAndEndsShut() {
+        var hinge = LidHinge()
+        hinge.release()
+        _ = fly(&hinge)
+        hinge.shut()
+        let flight = fly(&hinge, seconds: 1)
+        XCTAssertEqual(hinge.angle, 0)
+        XCTAssertEqual(hinge.mode, .resting)
+        XCTAssertLessThan(flight.restedAt ?? 9, 0.35, "a hand shuts a lid quickly")
+        XCTAssertGreaterThanOrEqual(flight.lowest, 0)
+    }
+
+    /// Shutting a lid that is already shut costs nothing and leaves it at rest.
+    func testShuttingAShutLidIsANoOp() {
+        var hinge = LidHinge()
+        hinge.shut()
+        for _ in 0..<10 { hinge.step(frame) }
+        XCTAssertEqual(hinge.angle, 0)
+        XCTAssertEqual(hinge.mode, .resting)
+    }
+
+    func testSnapShutClearsEverythingInFlight() {
+        var hinge = LidHinge()
+        hinge.release()
+        for _ in 0..<12 { hinge.step(frame) }
+        hinge.snapShut()
+        XCTAssertEqual(hinge.angle, 0)
+        XCTAssertEqual(hinge.velocity, 0)
+        XCTAssertEqual(hinge.mode, .resting)
+        XCTAssertFalse(hinge.isMoving)
+    }
+
+    /// The landing time may not depend on the frame rate: a 30Hz stall and a 240Hz display have to
+    /// land the lid at the same moment, to within a frame.
+    func testLandingTimeDoesNotDependOnTheFrameRate() {
+        func landing(at step: Double) -> Double {
+            var hinge = LidHinge()
+            hinge.release()
+            var time = 0.0
+            while time < 1 {
+                hinge.step(step)
+                time += step
+                if hinge.impact > 0 { return time }
+            }
+            return time
+        }
+        let fast = landing(at: 1.0 / 240)
+        XCTAssertEqual(landing(at: 1.0 / 60), fast, accuracy: 0.03)
+        XCTAssertEqual(landing(at: 1.0 / 30), fast, accuracy: 0.04)
+    }
+
+    func testAHugeStepCannotTunnelThroughTheStop() {
+        var hinge = LidHinge()
+        hinge.release()
+        hinge.step(10)
+        XCTAssertLessThanOrEqual(hinge.angle, hinge.stop)
+        XCTAssertGreaterThanOrEqual(hinge.angle, 0)
     }
 }

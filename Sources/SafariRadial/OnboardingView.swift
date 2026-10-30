@@ -276,8 +276,8 @@ private struct WelcomeMark: View {
                 }
 
                 // Lid, standing open behind the case.
-                context.fill(ringPath(metrics.caseRadius, lid: lid), with: .color(CompassTheme.brassMid.swiftUI()))
-                context.stroke(ringPath(metrics.caseRadius, lid: lid),
+                context.fill(ringPath(metrics.lidRadius, lid: lid), with: .color(CompassTheme.brassMid.swiftUI()))
+                context.stroke(ringPath(metrics.lidRadius, lid: lid),
                                with: .color(CompassTheme.brassDeep.swiftUI(alpha: 0.55)), lineWidth: 1)
 
                 // Case and card.

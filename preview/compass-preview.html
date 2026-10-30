@@ -7,8 +7,10 @@
 <!--
   Design harness, not shipped. `CompassRenderer.swift` is the real instrument; this page exists
   because it renders in a browser that can be screenshotted on a Linux box, where AppKit cannot
-  build. Numbers here (caseOut, sectorIn, lidOpen, …) are the ones mirrored in
-  `CompassMetrics`, so if you change the look, change both and re-run the tests.
+  build. Numbers here (caseOut, sectorIn, lidOpen, lidDepth, …) are the ones mirrored in
+  `CompassMetrics`, and `HINGE_TUNING` is `LidHinge.Tuning`, so if you change the look or the
+  feel, change both and re-run the tests.
+  Frames: ?freeze=deg (lid held at an angle), ?at=ms (the opening, ms in), ?closeat=ms.
 -->
 <style>
   :root { color-scheme: dark; }
@@ -44,8 +46,11 @@ const LID_PLAIN = Q.has('plain');
 // individual alpha.
 // Launch velocities, matching RadialMenuView.present().
 const OPEN_KICK = 4.6;
-const LID_KICK = 14;
+// The lid is no longer a spring: see LidHinge. How hard the stop shakes the case when it lands:
+const IMPACT_TILT = 0.12;
 const AT_MS = Q.has('at') ? parseFloat(Q.get('at')) : null;
+// `?closeat=ms`: start fully open, push it shut, and hold the gesture ms in.
+const CLOSE_AT_MS = Q.has('closeat') ? parseFloat(Q.get('closeat')) : null;
 const AGE = Q.has('age') ? parseFloat(Q.get('age')) : 1.3;
 
 const SLICES = [
@@ -92,8 +97,12 @@ const P = {
   scaleOut:  0.985,
   numeralR:  0.930,   // in a gate cut through the tick ring, on cream
   labelR:    0.575,
-  lid:       LID_OVERRIDE || 0.87,    // lid disc, well inside the case's lip
-  lidOpen:   120
+  lid:       LID_OVERRIDE || 0.95,    // lid outer radius, as a multiple of the case's: it closes inside the lip, and perspective makes up the difference when it stands
+  lidDepth:  0.105,                   // how deep the dish is, so the lid has a wall rather than an edge
+  lidWall:   0.045,                   // wall thickness
+  lidPlate:  0.018,                   // thickness of the plate that closes the dish
+  lidChamfer: 0.040,                  // the shoulder where the cover rolls into the wall
+  lidOpen:   ANGLE_OVERRIDE || 120
 };
 
 // ── Deterministic wear ─────────────────────────────────────────────────────
@@ -152,6 +161,62 @@ class Spring {
   }
 }
 
+
+// ── The hinge, as a physical thing ─────────────────────────────────────────
+// Mirrors RadialCore/LidHinge.swift. The lid is flicked, goes over the top, and falls onto its
+// stop: gravity pulls it shut until it passes vertical and open after, so the swing slows near
+// the top and then drops. The stop is hard, with a little bounce. Closing is driven, because
+// a real lid is pushed shut, and meets the case with a small clack.
+const HINGE_TUNING = {
+  gravity: 46, friction: 2.5, stopBounce: 0.38, maxBounce: 3.0, shutBounce: 0.16, restSpeed: 0.9,
+  pop: 1.5, driveTo: 0.25, drive: 400,
+  closeStiffness: 520, closeDamping: 40, closeTarget: -0.07
+};
+class LidHinge {
+  constructor(stop) { this.stop = stop; this.angle = 0; this.velocity = 0; this.mode = 'rest'; this.impact = 0; }
+  get moving() { return this.mode !== 'rest' || this.velocity !== 0; }
+  release() {
+    const T = HINGE_TUNING;
+    this.mode = 'opening';
+    // Enough to clear vertical from wherever it is, so a reversal can never stall it half open.
+    const launch = this.angle < 0.05
+      ? T.pop
+      : Math.sqrt(Math.max(0, 2 * T.gravity * (1 - Math.sin(this.angle)))) * 1.2 + 2.5;
+    this.velocity = Math.max(this.velocity, launch);
+  }
+  shut() { this.mode = 'closing'; }
+  step(dt) {
+    const T = HINGE_TUNING;
+    this.impact = 0;
+    if (this.frozen || this.mode === 'rest') return;
+    const n = Math.max(1, Math.ceil(Math.min(dt, 0.25) * 240));
+    const h = Math.min(dt, 0.25) / n;
+    for (let i = 0; i < n; i++) {
+      let acc;
+      if (this.mode === 'closing') {
+        acc = -T.closeStiffness * (this.angle - T.closeTarget) - T.closeDamping * this.velocity;
+      } else {
+        acc = -T.gravity * Math.cos(this.angle) - T.friction * this.velocity;
+        if (this.angle < T.driveTo) acc += T.drive;
+      }
+      this.velocity += acc * h;
+      this.angle += this.velocity * h;
+      if (this.angle >= this.stop) {
+        this.angle = this.stop;
+        if (this.velocity > T.restSpeed) { this.impact = Math.max(this.impact, this.velocity); this.velocity = -Math.min(T.stopBounce * this.velocity, T.maxBounce); }
+        else this.velocity = 0;
+      } else if (this.angle <= 0) {
+        this.angle = 0;
+        if (this.velocity < -T.restSpeed) { this.impact = Math.max(this.impact, -this.velocity); this.velocity = -T.shutBounce * this.velocity; }
+        else this.velocity = 0;
+      }
+    }
+    if (this.velocity === 0 && (this.angle === this.stop && this.mode === 'opening' || this.angle === 0 && this.mode === 'closing')) {
+      this.mode = 'rest';
+    }
+  }
+}
+
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let W = 0, H = 0, DPR = 1, R = 200;
@@ -161,7 +226,6 @@ let hoveredSlice = null;
 
 const S = {
   open:   new Spring(0, 420, 27),   // matches RadialMenuView.openProgress
-  lid:    new Spring(0, 700, 38),   // matches RadialMenuView.lidOpen
   pitch:  new Spring(0, 170, 26),
   roll:   new Spring(0, 170, 26),
   needle: new Spring(0, 300, 26),
@@ -182,26 +246,17 @@ function project(x, y, z) {
   return { x: x1 * s, y: y1 * s, s, z: z2 };
 }
 
-// Single source of truth for the lid angle. This file previously carried the value twice —
-// once in the copied-from-Swift `P` table (dead) and once here, hard-coded to the old 150° —
-// so editing the documented one changed nothing and the harness silently previewed a
-// different instrument from the app's. It reads the table now.
+// Single source of truth for the lid's stop, in degrees.
 const LID_OPEN_ANGLE = ANGLE_OVERRIDE || P.lidOpen;
 
 let lidAngle = 0;
-// The hinge plane. At 0.87 case-radii the lid rim is already outside the card's edge,
-// so a plain rim hinge both covers the dial when shut and clears it when open — no
-// strap needed, and a strap would lift the lid's near edge off the case.
-const HINGE_LIFT = Q.has('lift') ? parseFloat(Q.get('lift')) : 0;
+// The hinge sits on the lid's own rim, at the height of the case's crest. The lid is flush with the
+// case, so that is also the case's back edge: the barrel stands out behind it, like a real one.
+const HINGE_LIFT = 0;
 const HINGE_Y = () => -R * P.caseOut * (P.lid + HINGE_LIFT);
 const HINGE_Z = () => R * P.top;
 
-function projectLid(x, y, z) {
-  const rel = y - HINGE_Y();
-  const ca = Math.cos(lidAngle), sa = Math.sin(lidAngle);
-  return project(x, HINGE_Y() + rel * ca, HINGE_Z() - rel * sa + z);
-}
-
+const HINGE = new LidHinge(LID_OPEN_ANGLE * Math.PI / 180);
 const TAU = Math.PI * 2;
 const step = () => TAU / SLICES.length;
 const norm = a => ((a % TAU) + TAU) % TAU;
@@ -326,95 +381,299 @@ function drawContactShadow() {
 }
 
 // ── Lid ────────────────────────────────────────────────────────────────────
-// A pressed brass lid, slightly smaller than the case and hinged on its own rim.
-// Drawn as a turned plate: bead, lathe grooves, engraved rose, maker's mark, and
-// the tarnish a lid collects on the side nobody wipes.
-function lidPointOf(a, r) {
-  return projectLid(r * Math.sin(a), -r * Math.cos(a), 0);
-}
-function lidFlatOf(x, y) {
-  return projectLid(x, y, 0);
+// A real lid, not a plate: a shallow brass dish with a milled wall, a chamfered shoulder, a
+// flat cover on the outside and the engraved plate on the inside. It is a small mesh in the
+// lid's own frame (x right, y toward the case, h up off the case when shut), swung about the
+// hinge, then painted far-to-near with the faces that point away from the eye dropped. That
+// is what lets it show its cover on the way up, turn edge-on, and come over to show the
+// engraving — the flip the flat plate could only fake. Mirrors CompassLid + drawLid in
+// CompassRenderer.swift.
+
+// The height above the lid's rim plane that lidPointOf / lidFlatOf currently draw at. The cover and
+// the floor are different heights, and both carry art authored in the same lid-plane units.
+let LID_H = 0;
+
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const norm3 = a => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+// Key light from the upper left and toward the viewer. Fill is the pale card throwing warm
+// light back up: it is why the inside of a leaning lid glows instead of going to mud.
+const KEY  = norm3([-0.42, -0.58, 0.70]);
+const FILL = norm3([0.10, 0.78, 0.55]);
+const HALF = norm3([KEY[0], KEY[1], KEY[2] + 1]);
+
+function lidDims() {
+  const L = R * P.caseOut * P.lid;
+  const depth = R * P.lidDepth, wall = R * P.lidWall, plate = R * P.lidPlate, ch = R * P.lidChamfer;
+  return { L, depth, wall, plate, ch, floorR: L - wall, floorH: depth - plate, coverR: L - ch };
 }
 
-// The lid's shadow on the case top.
-//
-// Clipped to the case, and shallow. A free-floating ellipse straddling the hinge is
-// what made the lid read as detached — it painted a dark band in the air between
-// lid and box, which the eye takes as a gap. Painted inside the brass instead, it
-// lands on the object.
-function drawLidShadow() {
-  const sa = Math.sin(lidAngle);
-  if (sa < 0.12) return;
-  const near = Math.min(1, (sa - 0.12) / 0.6);
-  const rad = R * P.caseOut;
-  const lid = rad * P.lid;
-  const hinge = project(0, HINGE_Y(), 0);
-  const top = hinge.y - lid * 0.02;
+function swingPt(x, y, h) {
+  const ca = Math.cos(lidAngle), sa = Math.sin(lidAngle);
+  const hy = HINGE_Y(), hz = HINGE_Z();
+  const rel = y - hy;
+  return [x, hy + rel * ca - h * sa, hz + rel * sa + h * ca];
+}
+
+// Camera rotation only (no translation, no perspective), for normals and depth.
+let CAM = { cr: 1, sr: 0, cp: 1, sp: 0, d: 800 };
+function syncCam() {
+  CAM = { cr: Math.cos(S.roll.value), sr: Math.sin(S.roll.value),
+          cp: Math.cos(S.pitch.value), sp: Math.sin(S.pitch.value), d: R * (EYE_OVERRIDE || 8) };
+}
+function camRotate(v) {
+  const x1 = v[0] * CAM.cr + v[2] * CAM.sr;
+  const z1 = -v[0] * CAM.sr + v[2] * CAM.cr;
+  return [x1, v[1] * CAM.cp - z1 * CAM.sp, v[1] * CAM.sp + z1 * CAM.cp];
+}
+function camScreen(v) {
+  const s = CAM.d / (CAM.d - v[2]);
+  return { x: v[0] * s, y: v[1] * s, s };
+}
+
+function projectLid(x, y, z) {
+  const p = swingPt(x, y, z + LID_H);
+  return project(p[0], p[1], p[2]);
+}
+function lidPointOf(a, r) { return projectLid(r * Math.sin(a), -r * Math.cos(a), 0); }
+function lidFlatOf(x, y) { return projectLid(x, y, 0); }
+
+// Brass, as a function of how much light a face catches. Warm throughout: the highlights stay
+// cream and the shadows go olive rather than grey.
+const BRASS_RAMP = [
+  [0.00, [26, 19, 10]], [0.22, [58, 44, 24]], [0.42, [96, 74, 40]], [0.60, [133, 101, 56]],
+  [0.78, [179, 145, 90]], [0.92, [213, 192, 143]], [1.00, [238, 223, 180]]
+];
+function brass(i, alpha = 1) {
+  i = Math.max(0, Math.min(1, i));
+  let k = 1;
+  while (k < BRASS_RAMP.length - 1 && BRASS_RAMP[k][0] < i) k++;
+  const [t0, c0] = BRASS_RAMP[k - 1], [t1, c1] = BRASS_RAMP[k];
+  const u = (i - t0) / (t1 - t0);
+  const c = c0.map((v, n) => Math.round(v + (c1[n] - v) * u));
+  return alpha >= 1 ? `rgb(${c[0]},${c[1]},${c[2]})` : `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
+}
+function lightOn(n, shine) {
+  const kd = Math.max(0, dot3(n, KEY));
+  const kf = Math.max(0, dot3(n, FILL));
+  const spec = Math.pow(Math.max(0, dot3(n, HALF)), 26);
+  return 0.20 + 0.56 * kd + 0.36 * kf + shine * spec;
+}
+
+// The lid's mesh, in its own frame. Rebuilt per frame because it follows R.
+function buildLidFaces() {
+  const d = lidDims();
+  const N = 144;
+  const pol = (r, a, h) => [r * Math.sin(a), -r * Math.cos(a), h];
+  const faces = [];
+  for (let i = 0; i < N; i++) {
+    const a0 = i / N * TAU, a1 = (i + 1) / N * TAU, am = (a0 + a1) / 2;
+    const rx = Math.sin(am), ry = -Math.cos(am);
+    const shoulderH = d.depth - d.ch;
+    faces.push({ kind: 'wall', i, n: [rx, ry, 0],
+      v: [pol(d.L, a0, 0), pol(d.L, a1, 0), pol(d.L, a1, shoulderH), pol(d.L, a0, shoulderH)] });
+    faces.push({ kind: 'shoulder', i, n: [rx * 0.707, ry * 0.707, 0.707],
+      v: [pol(d.L, a0, shoulderH), pol(d.L, a1, shoulderH), pol(d.coverR, a1, d.depth), pol(d.coverR, a0, d.depth)] });
+    faces.push({ kind: 'rim', i, n: [0, 0, -1],
+      v: [pol(d.L, a0, 0), pol(d.L, a1, 0), pol(d.floorR, a1, 0), pol(d.floorR, a0, 0)] });
+    faces.push({ kind: 'inner', i, n: [-rx, -ry, 0],
+      v: [pol(d.floorR, a0, 0), pol(d.floorR, a1, 0), pol(d.floorR, a1, d.floorH), pol(d.floorR, a0, d.floorH)] });
+  }
+  const ring = (r, h) => Array.from({ length: N }, (_, i) => pol(r, i / N * TAU, h));
+  faces.push({ kind: 'cover', n: [0, 0, 1], v: ring(d.coverR, d.depth) });
+  faces.push({ kind: 'floor', n: [0, 0, -1], v: ring(d.floorR, d.floorH) });
+  return faces;
+}
+
+// Places every face: world position, depth, whether it faces the eye, and its screen polygon.
+function placeLidFaces(faces) {
+  syncCam();
+  const out = [];
+  for (const f of faces) {
+    const view = f.v.map(p => camRotate(swingPt(p[0], p[1], p[2])));
+    const c = [0, 0, 0];
+    for (const v of view) { c[0] += v[0]; c[1] += v[1]; c[2] += v[2]; }
+    c[0] /= view.length; c[1] /= view.length; c[2] /= view.length;
+    const sw = swingPt(f.n[0], f.n[1], f.n[2]);
+    // Normals are vectors: swing them without the hinge's translation.
+    const ca = Math.cos(lidAngle), sa = Math.sin(lidAngle);
+    const nv = camRotate([f.n[0], f.n[1] * ca - f.n[2] * sa, f.n[1] * sa + f.n[2] * ca]);
+    const toEye = [-c[0], -c[1], CAM.d - c[2]];
+    if (dot3(nv, toEye) <= 0) continue;
+    f.nv = nv; f.z = c[2];
+    f.s = view.map(camScreen);
+    out.push(f);
+  }
+  out.sort((a, b) => a.z - b.z);
+  return out;
+}
+
+function polyPath(pts) {
+  ctx.beginPath();
+  pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  ctx.closePath();
+}
+
+// Cheap, stable pseudo-noise for the wall, so no two ridges are quite alike.
+const wobble = i => { const s = Math.sin(i * 12.9898 + 4.1) * 43758.5453; return s - Math.floor(s); };
+
+function paintLidBand(f) {
+  let I = lightOn(f.nv, f.kind === 'shoulder' ? 0.30 : 0.10);
+  if (f.kind === 'wall') {
+    // Milled edge: alternate ridges, and a little unevenness so it is not a printed pattern.
+    I *= (f.i % 2 ? 0.95 : 1.02) * (0.985 + wobble(f.i) * 0.03);
+  } else if (f.kind === 'shoulder') {
+    I += 0.05;
+  } else if (f.kind === 'inner') {
+    I *= 0.78;
+  } else if (f.kind === 'rim') {
+    I *= 0.92;
+  }
+  const colour = brass(I);
+  polyPath(f.s);
+  ctx.fillStyle = colour;
+  ctx.fill();
+  // The same colour as a hairline: adjacent polygons otherwise leave seams of backdrop.
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = 0.7;
+  ctx.stroke();
+}
+
+// The line where the lid meets the case, and the lit crest of the shoulder.
+function paintLidEdges(faces) {
+  const wall = faces.filter(f => f.kind === 'wall');
+  const shoulder = faces.filter(f => f.kind === 'shoulder');
   ctx.save();
-  tracePath(ringPts(rad, 96, project));
-  ctx.clip();
-  const g = ctx.createLinearGradient(0, top, 0, top + lid * 0.34);
-  g.addColorStop(0, `rgba(24,16,8,${0.30 * near})`);
-  g.addColorStop(0.45, `rgba(24,16,8,${0.13 * near})`);
-  g.addColorStop(1, 'rgba(24,16,8,0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(-rad, top, rad * 2, lid * 0.40);
+  ctx.lineCap = 'round';
+  for (const f of wall) {
+    // Seam against the case: only matters while the lid is down on it.
+    ctx.beginPath(); ctx.moveTo(f.s[0].x, f.s[0].y); ctx.lineTo(f.s[1].x, f.s[1].y);
+    ctx.strokeStyle = 'rgba(18,12,5,.55)';
+    ctx.lineWidth = Math.max(0.9, R * 0.006);
+    ctx.stroke();
+  }
+  for (const f of shoulder) {
+    const lit = Math.max(0, Math.min(1, lightOn(f.nv, 0.5) - 0.35));
+    ctx.beginPath(); ctx.moveTo(f.s[3].x, f.s[3].y); ctx.lineTo(f.s[2].x, f.s[2].y);
+    ctx.strokeStyle = `rgba(255,243,212,${0.10 + 0.55 * lit})`;
+    ctx.lineWidth = Math.max(0.8, R * 0.005);
+    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(f.s[0].x, f.s[0].y); ctx.lineTo(f.s[1].x, f.s[1].y);
+    ctx.strokeStyle = `rgba(255,236,196,${0.06 + 0.30 * lit})`;
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
-function drawLid() {
-  if (lidAngle < 0.02) return;
-  const rad = R * P.caseOut * P.lid;
-  const rim = ringPts(rad, 96, projectLid);
-  const bb = rim.reduce((acc, p) => ({
-    x0: Math.min(acc.x0, p.x), y0: Math.min(acc.y0, p.y),
-    x1: Math.max(acc.x1, p.x), y1: Math.max(acc.y1, p.y)
+function polyBounds(pts) {
+  return pts.reduce((a, p) => ({
+    x0: Math.min(a.x0, p.x), y0: Math.min(a.y0, p.y), x1: Math.max(a.x1, p.x), y1: Math.max(a.y1, p.y)
   }), { x0: 1e9, y0: 1e9, x1: -1e9, y1: -1e9 });
+}
+
+function blot(p, rr, stops) {
+  const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rr);
+  stops.forEach(([t, c]) => g.addColorStop(t, c));
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, TAU); ctx.fill();
+}
+
+// The outside of the lid: a spun cover with a rolled border, a thumb-polished patch where the
+// hand takes it, and the tarnish a cover collects from a century in a pocket.
+function paintLidCover(f) {
+  const d = lidDims();
+  const rad = d.coverR;
+  LID_H = d.depth;
+  const I = lightOn(f.nv, 0.24);
+  const bb = polyBounds(f.s);
   const centre = { x: (bb.x0 + bb.x1) / 2, y: (bb.y0 + bb.y1) / 2 };
 
-  // Thickness: the plate's milled edge, a thin crescent under the face. Kept to a
-  // couple of pixels and lit like brass — a thick near-black band here reads as a
-  // gap between lid and case, not as the edge of the metal.
   ctx.save();
-  ctx.translate(0, rad * 0.012 * Math.sin(lidAngle));
-  tracePath(rim);
-  ctx.fillStyle = '#3d2f1c';
+  polyPath(f.s);
+  ctx.fillStyle = brass(I);
   ctx.fill();
-  ctx.restore();
-
-  // Face. The lid leans away from the viewer, so its inside is in shadow: it must read a
-  // step darker than the case's bright top, or it looks like a lit plate floating over brass.
-  ctx.save();
-  tracePath(rim);
   ctx.clip();
 
+  // Spun finish.
+  for (let i = 0; i < 30; i++) {
+    const t = i / 30;
+    traceLine(ringPts(rad * (0.10 + 0.88 * t), 72, projectLid));
+    ctx.strokeStyle = i % 2 ? `rgba(255,247,224,${0.040 * (1 - t * 0.5)})` : `rgba(30,22,11,${0.050 * (1 - t * 0.5)})`;
+    ctx.lineWidth = Math.max(0.6, rad * 0.0036);
+    ctx.stroke();
+  }
+  // Sheen follows the light across the plate as it turns.
+  const lit = lidFlatOf(-rad * 0.38, -rad * 0.34);
+  const sheen = ctx.createRadialGradient(lit.x, lit.y, rad * 0.03, lit.x, lit.y, rad * 1.05);
+  sheen.addColorStop(0, 'rgba(255,246,220,.22)');
+  sheen.addColorStop(0.45, 'rgba(255,246,220,.05)');
+  sheen.addColorStop(1, 'rgba(20,14,7,.16)');
+  ctx.fillStyle = sheen;
+  ctx.fillRect(bb.x0, bb.y0, bb.x1 - bb.x0, bb.y1 - bb.y0);
+
+  // Rolled border and a central roundel.
+  [['rgba(0,0,0,.30)', 1.1, 0.900], ['rgba(255,250,235,.16)', 0.8, 0.885], ['rgba(0,0,0,.20)', 0.9, 0.300],
+   ['rgba(255,250,235,.12)', 0.8, 0.288]].forEach(([c, w, k]) => {
+    traceLine(ringPts(rad * k, 96, projectLid));
+    ctx.strokeStyle = c; ctx.lineWidth = w; ctx.stroke();
+  });
+  const boss = lidFlatOf(0, 0);
+  blot(boss, rad * 0.10, [[0, 'rgba(255,244,214,.16)'], [0.6, 'rgba(120,96,56,.10)'], [1, 'rgba(30,20,8,.20)']]);
+
+  // Thumb polish at the front edge.
+  blot(lidPointOf(Math.PI, rad * 0.80), rad * 0.36,
+    [[0, 'rgba(255,246,220,.20)'], [0.5, 'rgba(255,246,220,.07)'], [1, 'rgba(255,246,220,0)']]);
+
+  // Tarnish.
+  // Lighter than the inside: this is the side that gets handled and wiped.
+  LID_BLOTCH.forEach(b => blot(lidFlatOf(-b.x * rad, b.y * rad), b.r * rad * 1.3,
+    [[0, `rgba(74,72,50,${Math.min(1, b.a * AGE * 0.38)})`], [1, 'rgba(74,72,50,0)']]));
+  LID_PATINA.forEach(b => blot(lidFlatOf(-b.x * rad, -b.y * rad), b.r * rad * 1.15,
+    [[0, `rgba(74,72,50,${Math.min(1, b.a * AGE * 0.45)})`], [0.52, `rgba(74,72,50,${Math.min(1, b.a * 0.5 * AGE * 0.45)})`], [1, 'rgba(74,72,50,0)']]));
+
+  // Edge vignette: the cover rolls over into its shoulder.
+  const vig = ctx.createRadialGradient(centre.x, centre.y, rad * 0.6, centre.x, centre.y, rad * 1.04);
+  vig.addColorStop(0, 'rgba(24,17,9,0)');
+  vig.addColorStop(1, 'rgba(24,17,9,.30)');
+  ctx.fillStyle = vig;
+  ctx.fillRect(bb.x0, bb.y0, bb.x1 - bb.x0, bb.y1 - bb.y0);
+  ctx.restore();
+}
+
+// The inside of the lid: the engraved plate. Lit mostly by the card below it.
+function paintLidFloor(f) {
+  const d = lidDims();
+  const rad = d.floorR;
+  LID_H = d.floorH;
+  const I = lightOn(f.nv, 0.10) * 0.94;
+  const rim = f.s;
+  const bb = polyBounds(rim);
+  const centre = { x: (bb.x0 + bb.x1) / 2, y: (bb.y0 + bb.y1) / 2 };
+
+  ctx.save();
+  polyPath(rim);
+  ctx.fillStyle = brass(I);
+  ctx.fill();
+  ctx.clip();
+
+  // Depth: the plate is darker toward the far end of the dish, which is further from the card's glow.
   const face = ctx.createLinearGradient(0, bb.y1, 0, bb.y0);
-  face.addColorStop(0.00, '#9c8659');
-  face.addColorStop(0.14, '#8d7849');
-  face.addColorStop(0.42, '#6f5c39');
-  face.addColorStop(0.72, '#54452a');
-  face.addColorStop(1.00, '#3b2f1c');
+  face.addColorStop(0.0, 'rgba(255,240,200,.05)');
+  face.addColorStop(0.55, 'rgba(40,28,12,.00)');
+  face.addColorStop(1.0, 'rgba(28,19,8,.30)');
   ctx.fillStyle = face;
   ctx.fillRect(bb.x0, bb.y0, bb.x1 - bb.x0, bb.y1 - bb.y0);
 
-  // Turned finish: alternating lit and shadowed bands, tightening toward the bead. Bands
-  // rather than single dark rings, because a spun surface catches light on each ridge.
-  // A turned surface: each pass of the tool leaves a ridge that catches light on one
-  // side and holds shadow on the other. Irregular spacing, because evenly spaced rings
-  // read as a vinyl record.
+  // Turned finish: bands rather than rings. A spun surface catches light on each ridge.
   for (let i = 0; i < 26; i++) {
     const t = i / 26;
     const rr = rad * (0.16 + 0.82 * Math.pow(t, 0.86));
     const fade = 1 - t * 0.55;
     traceLine(ringPts(rr, 72, projectLid));
-    ctx.strokeStyle = i % 2
-      ? `rgba(255,247,224,${0.030 * fade})`
-      : `rgba(30,22,11,${0.045 * fade})`;
+    ctx.strokeStyle = i % 2 ? `rgba(255,247,224,${0.030 * fade})` : `rgba(30,22,11,${0.045 * fade})`;
     ctx.lineWidth = Math.max(0.6, rad * 0.0038);
     ctx.stroke();
   }
-
-  // Tool chatter: a few bright arcs, off-centre, as though the plate was spun by hand.
   [[0.30, 0.52, .05], [0.55, 0.86, .04], [0.74, 0.97, .035]].forEach(([a0, a1, al]) => {
     const arc = [];
     for (let i = 0; i <= 40; i++) arc.push(lidPointOf(a0 + (a1 - a0) * i / 40, rad * 0.90));
@@ -424,48 +683,35 @@ function drawLid() {
     ctx.stroke();
   });
 
-  // A broad specular sweep across the upper left, where the plate faces the light.
-  const sheen = ctx.createRadialGradient(
-    bb.x0 + (bb.x1 - bb.x0) * 0.34, bb.y0 + (bb.y1 - bb.y0) * 0.34, rad * 0.04,
-    centre.x, centre.y, Math.max(bb.x1 - bb.x0, bb.y1 - bb.y0) * 0.58);
-  sheen.addColorStop(0, 'rgba(255,246,220,.20)');
-  sheen.addColorStop(0.40, 'rgba(255,246,220,.05)');
-  sheen.addColorStop(1, 'rgba(20,14,7,.18)');
-  ctx.fillStyle = sheen;
+  // The card's glow, pooled low in the plate, and a soft shoulder into the wall.
+  const glow = ctx.createRadialGradient(centre.x, bb.y1 - (bb.y1 - bb.y0) * 0.18, rad * 0.05,
+                                        centre.x, centre.y, Math.max(bb.x1 - bb.x0, bb.y1 - bb.y0) * 0.62);
+  glow.addColorStop(0, 'rgba(255,238,200,.15)');
+  glow.addColorStop(0.5, 'rgba(255,238,200,.04)');
+  glow.addColorStop(1, 'rgba(20,14,7,.10)');
+  ctx.fillStyle = glow;
   ctx.fillRect(bb.x0, bb.y0, bb.x1 - bb.x0, bb.y1 - bb.y0);
-
-  // Vignette into the bead, so the plate turns over into its own edge.
   const vig = ctx.createRadialGradient(centre.x, centre.y, rad * 0.55, centre.x, centre.y, rad * 1.02);
   vig.addColorStop(0, 'rgba(24,17,9,0)');
   vig.addColorStop(0.72, 'rgba(24,17,9,.10)');
-  vig.addColorStop(1, 'rgba(24,17,9,.42)');
+  vig.addColorStop(1, 'rgba(24,17,9,.38)');
   ctx.fillStyle = vig;
   ctx.fillRect(bb.x0, bb.y0, bb.x1 - bb.x0, bb.y1 - bb.y0);
 
-  // Engraved border inside the bead.
-  [['rgba(0,0,0,.30)', 1.1, 0.855],
-   ['rgba(0,0,0,.22)', 0.9, 0.815],
-   ['rgba(255,250,235,.13)', 0.8, 0.800]].forEach(([c, w, f]) => {
-    traceLine(ringPts(rad * f, 96, projectLid));
+  [['rgba(0,0,0,.30)', 1.1, 0.855], ['rgba(0,0,0,.22)', 0.9, 0.815], ['rgba(255,250,235,.13)', 0.8, 0.800]].forEach(([c, w, k]) => {
+    traceLine(ringPts(rad * k, 96, projectLid));
     ctx.strokeStyle = c; ctx.lineWidth = w; ctx.stroke();
   });
 
   drawLidRose(rad);
 
-  // Maker's mark.
   const mark = lidFlatOf(0, rad * 0.705);
   text('SAFARI  RADIAL', { x: mark.x, y: mark.y, s: Math.min(1, Math.max(0.62, Math.abs(Math.cos(lidAngle)) + 0.55)) }, {
-    size: Math.max(5.2, rad * 0.044), font: SERIF, color: 'rgba(26,18,9,.30)', weight: '600', tracking: 1.2
+    size: Math.max(5.2, rad * 0.044), font: SERIF, color: 'rgba(26,18,9,.34)', weight: '600', tracking: 1.2
   });
 
-  // Ageing. The brief is "old and worn, not damaged": no chips, no dents — just
-  // the even darkening and hand-polish that a century of opening and closing
-  // leaves. The lid sat shut for all of it, so its tarnish is uniform and its one
-  // bright patch is where the thumb caught the rim.
-
-  // Even tarnish across the whole plate, warm rather than grey.
-  const tann = ctx.createRadialGradient(centre.x, centre.y, rad * 0.10,
-                                        centre.x, centre.y, rad * 1.02);
+  // Even tarnish, then the broad mottling and the sharper patina.
+  const tann = ctx.createRadialGradient(centre.x, centre.y, rad * 0.10, centre.x, centre.y, rad * 1.02);
   tann.addColorStop(0, 'rgba(96,74,40,0.02)');
   tann.addColorStop(0.55, 'rgba(88,66,36,0.10)');
   tann.addColorStop(0.86, 'rgba(76,56,30,0.20)');
@@ -473,85 +719,99 @@ function drawLid() {
   ctx.fillStyle = tann;
   ctx.fillRect(bb.x0, bb.y0, bb.x1 - bb.x0, bb.y1 - bb.y0);
 
-  // Thumb polish on the near-left rim: the spot a hand finds every time.
-  {
-    const p = lidPointOf(Math.PI * 1.28, rad * 0.80);
-    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rad * 0.34);
-    g.addColorStop(0, 'rgba(255,246,220,0.13)');
-    g.addColorStop(0.5, 'rgba(255,246,220,0.05)');
-    g.addColorStop(1, 'rgba(255,246,220,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(p.x, p.y, rad * 0.34, 0, TAU); ctx.fill();
-  }
+  LID_BLOTCH.forEach(b => blot(lidFlatOf(b.x * rad, b.y * rad), b.r * rad * 1.1,
+    [[0, `rgba(74,72,50,${Math.min(1, b.a * AGE)})`], [1, 'rgba(74,72,50,0)']]));
+  LID_PATINA.forEach(b => blot(lidFlatOf(b.x * rad, b.y * rad), b.r * rad * 1.15,
+    [[0, `rgba(74,72,50,${Math.min(1, b.a * AGE)})`], [0.52, `rgba(74,72,50,${Math.min(1, b.a * 0.5 * AGE)})`], [1, 'rgba(74,72,50,0)']]));
 
-  // Tarnish: outer third only, where a thumb never reaches past the bead.
-  // Broad mottling on the lid's face, matching `CompassRenderer`'s lidUnevenness pass.
-  LID_BLOTCH.forEach(b => {
-    const p = lidFlatOf(b.x * rad, b.y * rad);
-    const rr = b.r * rad * 1.1;
-    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rr);
-    g.addColorStop(0, `rgba(74,72,50,${Math.min(1, b.a * AGE)})`);
-    g.addColorStop(1, 'rgba(74,72,50,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, TAU); ctx.fill();
-  });
-
-  LID_PATINA.forEach(b => {
-    const p = lidFlatOf(b.x * rad, b.y * rad);
-    const rr = b.r * rad * 1.15;
-    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rr);
-    // Stops mirror `CompassRenderer.drawWear` exactly (0 / 0.52 at half alpha / 1).
-    g.addColorStop(0, `rgba(74,72,50,${Math.min(1, b.a * AGE)})`);
-    g.addColorStop(0.52, `rgba(74,72,50,${Math.min(1, b.a * 0.5 * AGE)})`);
-    g.addColorStop(1, 'rgba(74,72,50,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, TAU); ctx.fill();
-  });
-
-  // Rust. Only along the hinge seam, where moisture collects and where nobody
-  // wipes: a real stain creeps *from* the hinge toward the plate, so it is drawn
-  // as a soft bleed under the hinge rather than as spots on the face.
-  {
-    const seam = lidPointOf(Math.PI, rad);
-    const bleed = ctx.createRadialGradient(seam.x, seam.y, 0,
-                                           seam.x, seam.y, rad * 0.52);
-    bleed.addColorStop(0, 'rgba(122,62,30,0.30)');
-    bleed.addColorStop(0.30, 'rgba(122,62,30,0.13)');
-    bleed.addColorStop(0.62, 'rgba(122,62,30,0.04)');
-    bleed.addColorStop(1, 'rgba(122,62,30,0)');
-    ctx.fillStyle = bleed;
-    ctx.beginPath(); ctx.arc(seam.x, seam.y, rad * 0.52, 0, TAU); ctx.fill();
-  }
-  LID_RUST.forEach(b => {
-    const p = lidFlatOf(b.x * rad, b.y * rad);
-    const rr = b.r * rad;
-    const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rr);
-    g.addColorStop(0, `rgba(115,59,30,${b.a})`);
-    g.addColorStop(0.5, `rgba(115,59,30,${b.a * 0.5})`);
-    g.addColorStop(1, 'rgba(115,59,30,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, TAU); ctx.fill();
-  });
+  // Rust creeps from the hinge seam toward the plate.
+  blot(lidPointOf(Math.PI, rad), rad * 0.52,
+    [[0, 'rgba(122,62,30,0.30)'], [0.30, 'rgba(122,62,30,0.13)'], [0.62, 'rgba(122,62,30,0.04)'], [1, 'rgba(122,62,30,0)']]);
+  LID_RUST.forEach(b => blot(lidFlatOf(b.x * rad, b.y * rad), b.r * rad,
+    [[0, `rgba(115,59,30,${b.a})`], [0.5, `rgba(115,59,30,${b.a * 0.5})`], [1, 'rgba(115,59,30,0)']]));
   ctx.restore();
+}
 
-  // Bead. The seat is heavy all the way round, because the lid is the darker object and
-  // sits in a lipped case: without it the plate floats over the brass.
-  const farArc = [];
-  for (let i = 0; i <= 64; i++) farArc.push(lidPointOf(Math.PI + i / 64 * Math.PI, rad));
-  traceLine(farArc);
-  ctx.strokeStyle = 'rgba(30,22,12,.62)';
-  ctx.lineWidth = Math.max(1.1, rad * 0.014);
-  ctx.stroke();
-  tracePath(rim);
-  ctx.strokeStyle = 'rgba(154,121,70,.85)';
-  ctx.lineWidth = Math.max(0.8, rad * 0.008);
-  ctx.stroke();
-  const lit = [];
-  for (let i = 0; i <= 40; i++) lit.push(lidPointOf(Math.PI * 1.18 + i / 40 * Math.PI * 0.85, rad));
-  traceLine(lit);
-  ctx.strokeStyle = `rgba(255,248,232,${0.10 + 0.24 * Math.abs(Math.sin(lidAngle))})`;
-  ctx.lineWidth = Math.max(0.9, rad * 0.007);
-  ctx.stroke();
+// Ambient occlusion where the lid meets the case. Kept for the open pose: a leaning lid
+// still darkens the brass under its hinge, and without it the lid reads as hovering.
+function drawLidShadow() {
+  const sa = Math.sin(lidAngle);
+  if (sa < 0.12) return;
+  const near = Math.min(1, (sa - 0.12) / 0.6);
+  const rad = R * P.caseOut;
+  const hinge = project(0, HINGE_Y(), 0);
+  const top = hinge.y - rad * 0.02;
+  ctx.save();
+  tracePath(ringPts(rad, 96, project));
+  ctx.clip();
+  const g = ctx.createLinearGradient(0, top, 0, top + rad * 0.30);
+  g.addColorStop(0, `rgba(24,16,8,${0.34 * near})`);
+  g.addColorStop(0.45, `rgba(24,16,8,${0.14 * near})`);
+  g.addColorStop(1, 'rgba(24,16,8,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(-rad, top, rad * 2, rad * 0.36);
+  ctx.restore();
+}
+
+// The shadow the lid throws on the case as it swings over it. Cast along the key light onto
+// the case's top plane, so it is attached at the hinge, slides across the dial as the lid
+// rises, and shortens to nothing as the lid stands up.
+function hull2(points) {
+  const pts = points.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+  const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lower = [];
+  for (const p of pts) { while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop(); lower.push(p); }
+  const upper = [];
+  for (let i = pts.length - 1; i >= 0; i--) { const p = pts[i]; while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop(); upper.push(p); }
+  upper.pop(); lower.pop();
+  return lower.concat(upper);
+}
+function drawLidCastShadow() {
+  if (lidAngle < 0.04) return;
+  const d = lidDims();
+  const crest = HINGE_Z();
+  const drift = [0.34, 0.46];
+  const pts = [];
+  for (const h of [0, d.depth]) {
+    for (let i = 0; i < 48; i++) {
+      const a = i / 48 * TAU;
+      const w = swingPt(d.L * Math.sin(a), -d.L * Math.cos(a), h);
+      const up = Math.max(0, w[2] - crest);
+      const q = project(w[0] + drift[0] * up, w[1] + drift[1] * up, crest);
+      pts.push({ x: q.x, y: q.y });
+    }
+  }
+  const poly = hull2(pts);
+  const cx = poly.reduce((s, p) => s + p.x, 0) / poly.length;
+  const cy = poly.reduce((s, p) => s + p.y, 0) / poly.length;
+  // Fades as the lid lifts clear: a high lid throws a faint, wide shadow.
+  const fade = Math.max(0, 1 - Math.max(0, lidAngle - 0.35) / 1.15);
+  ctx.save();
+  tracePath(ringPts(R * P.caseOut, 96, (x, y) => project(x, y, R * P.top)));
+  ctx.clip();
+  for (let k = 0; k < 5; k++) {
+    const grow = 1 + k * 0.035;
+    ctx.beginPath();
+    poly.forEach((p, i) => {
+      const x = cx + (p.x - cx) * grow, y = cy + (p.y - cy) * grow;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = `rgba(14,9,4,${0.085 * fade})`;
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawLid() {
+  const faces = placeLidFaces(buildLidFaces());
+  // Bands first and discs where depth puts them; the discs are the two big faces.
+  for (const f of faces) {
+    if (f.kind === 'cover') paintLidCover(f);
+    else if (f.kind === 'floor') paintLidFloor(f);
+    else paintLidBand(f);
+  }
+  paintLidEdges(faces);
 }
 
 // An engraved compass rose: a cut circle, eight points alternating long and
@@ -849,63 +1109,60 @@ function drawLug() {
   ctx.restore();
 }
 
-// The hinge barrel across the top of the case. It is what makes an open lid read
-// as attached rather than floating.
+// The hinge barrel across the back of the case. It is what makes the lid read as hung on the
+// box rather than hovering over it. Five knuckles on one pin, alternately the case's and the
+// lid's, drawn after the lid because the lid is what turns about them.
 function drawHinge() {
-  const outer = R * P.caseOut;
-  // A continuous barrel with three knuckles, not three beads: the outer two are
-  // drawn as short capsules joined by a thinner shaft.
-  //
-  // On the lid's pivot, not the case's rim: the lid closes inside the lip and hinges on a
-  // short strap, so a barrel drawn on the case's rim hangs below the plate it is meant to
-  // carry. Mirrors CompassRenderer.drawHinge.
   const y = HINGE_Y();
-  const shaftA = project(-R * 0.150, y, -R * P.top * 0.5);
-  const shaftB = project(R * 0.150, y, -R * P.top * 0.5);
-  ctx.beginPath();
-  ctx.moveTo(shaftA.x, shaftA.y);
-  ctx.lineTo(shaftB.x, shaftB.y);
-  ctx.strokeStyle = C.brassMid;
-  ctx.lineWidth = R * 0.026;
-  ctx.lineCap = 'round';
-  ctx.stroke();
-
-  for (const cx of [-R * 0.135, 0, R * 0.135]) {
-    const r = R * (cx === 0 ? 0.034 : 0.030);
-    const p = project(cx, y, -R * P.top * 0.5);
+  const z = HINGE_Z();
+  const rr = R * 0.040;
+  const span = R * 0.34;
+  const edges = [-span, -span * 0.6, -span * 0.2, span * 0.2, span * 0.6, span];
+  for (let k = 0; k < 5; k++) {
+    const x0 = edges[k] + R * 0.004, x1 = edges[k + 1] - R * 0.004;
+    const a = project(x0, y, z), b = project(x1, y, z);
+    const half = rr * (a.s + b.s) / 2;
+    const ownedByLid = k % 2 === 1;
+    // A capsule along the pin, shaded like a cylinder lit from above.
     ctx.beginPath();
-    ctx.ellipse(p.x, p.y, r * p.s * 1.5, r * p.s, 0, 0, TAU);
-    const g = ctx.createLinearGradient(p.x, p.y - r, p.x, p.y + r);
-    g.addColorStop(0, C.brassHi);
-    g.addColorStop(0.5, C.brassMid);
+    ctx.moveTo(a.x, a.y - half);
+    ctx.lineTo(b.x, b.y - half);
+    ctx.arc(b.x, b.y, half, -Math.PI / 2, Math.PI / 2);
+    ctx.lineTo(a.x, a.y + half);
+    ctx.arc(a.x, a.y, half, Math.PI / 2, Math.PI * 1.5);
+    ctx.closePath();
+    const g = ctx.createLinearGradient(0, a.y - half, 0, a.y + half);
+    g.addColorStop(0, ownedByLid ? '#e2cd98' : C.brassHi);
+    g.addColorStop(0.35, ownedByLid ? C.brassLit : C.brassLit);
+    g.addColorStop(0.7, C.brassMid);
     g.addColorStop(1, C.brassDeep);
     ctx.fillStyle = g;
     ctx.fill();
-    ctx.strokeStyle = 'rgba(30,21,10,.5)';
+    ctx.strokeStyle = 'rgba(24,16,8,.55)';
     ctx.lineWidth = 0.9;
     ctx.stroke();
-  }
-
-  // Rust belongs here rather than in drawBrass: it is a stain on the *knuckles*, which are
-  // drawn over the card's edge, so painting it with the brass put it underneath the dial.
-  const hy = HINGE_Y();
-  // Small and separated. At 0.215 rad the three blooms merged into one orange band across
-  // the whole top of the case, which read as a painted stripe rather than as corrosion —
-  // rust wants to be a stain *on* the metal, not a wash *over* it.
-  [-0.5, 0, 0.5].forEach((k, i) => {
-    const c = project(R * 0.135 * k * 2, hy, -R * P.top * 0.5);
-    const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, R * 0.088 * [1, 1.16, 0.82][i]);
-    g.addColorStop(0, 'rgba(82,45,25,.50)');
-    g.addColorStop(.30, 'rgba(115,59,30,.30)');
-    g.addColorStop(.62, 'rgba(115,59,30,.10)');
-    g.addColorStop(1, 'rgba(115,59,30,0)');
+    // Rust on the knuckles themselves, where water sits.
+    const mid = project((x0 + x1) / 2, y, z);
+    const rg = ctx.createRadialGradient(mid.x, mid.y, 0, mid.x, mid.y, R * 0.07);
+    rg.addColorStop(0, 'rgba(82,45,25,.34)');
+    rg.addColorStop(0.5, 'rgba(115,59,30,.14)');
+    rg.addColorStop(1, 'rgba(115,59,30,0)');
     ctx.save();
-    ctx.translate(c.x, c.y);
-    ctx.scale(1, 0.72);
-    ctx.translate(-c.x, -c.y);
-    ctx.fillStyle = g;
-    ctx.fillRect(c.x - R * 0.2, c.y - R * 0.2, R * 0.4, R * 0.4);
+    ctx.translate(mid.x, mid.y); ctx.scale(1.5, 0.7); ctx.translate(-mid.x, -mid.y);
+    ctx.fillStyle = rg;
+    ctx.fillRect(mid.x - R * 0.12, mid.y - R * 0.12, R * 0.24, R * 0.24);
     ctx.restore();
+  }
+  // The pin's end caps.
+  [-span - R * 0.004, span + R * 0.004].forEach(x => {
+    const p = project(x, y, z);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, rr * p.s * 0.62, 0, TAU);
+    ctx.fillStyle = C.brassDark;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(24,16,8,.6)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
   });
 }
 
@@ -1226,22 +1483,22 @@ function draw() {
   ctx.scale(0.94 + 0.06 * open, 0.94 + 0.06 * open);
 
   drawContactShadow();
-  drawLidShadow();
   drawCaseWall();
   drawLug();
   drawBrass();
   drawCard();
   drawCardPrinting();
-  // After the card: the barrel sits proud of the case's rim and overhangs the card's edge,
-  // so drawing it first lets the card paint over the knuckles and their rust.
-  drawHinge();
   drawSectorWash();
   drawNeedle();
   drawLabels();
   drawHub();
   // Last: shut it lies just above the card, and mid-swing its lower half passes
-  // in front of the card's near edge.
+  // in front of the card's near edge. Its shadow goes down first, on everything printed on
+  // the case top, and the barrel goes over it, because the barrel is what the lid hangs from.
+  drawLidShadow();
+  drawLidCastShadow();
   drawLid();
+  drawHinge();
 
   ctx.restore();
 }
@@ -1290,10 +1547,19 @@ function frame(now) {
     // at rest and are kicked, so what is judged here is the gesture the app actually plays.
     // Starting open at 0.30 with no kick (what this used to do) hid the stutter being fixed.
     S.open.value = 0; S.open.target = 1;
-    S.lid.value = 0;  S.lid.target = 1;
+    HINGE.angle = 0; HINGE.velocity = 0; HINGE.release();
     S.needle.value = 0;
-    if (FREEZE !== null) { S.open.value = 1; S.lid.value = 1; }
-    else { S.open.velocity = OPEN_KICK; S.lid.velocity = LID_KICK; }
+    if (FREEZE !== null) { S.open.value = 1; HINGE.angle = HINGE.stop; HINGE.velocity = 0; HINGE.mode = 'rest'; }
+    else { S.open.velocity = OPEN_KICK; }
+
+    if (CLOSE_AT_MS !== null) {
+      S.open.value = 1; S.open.target = 0; S.open.velocity = 0;
+      HINGE.angle = HINGE.stop; HINGE.velocity = 0; HINGE.mode = 'rest';
+      HINGE.shut();
+      const n = Math.round(CLOSE_AT_MS / 1000 * 240);
+      for (let i = 0; i < n; i++) { S.open.step(1 / 240); HINGE.step(1 / 240); }
+      S.open.velocity = 0; S.open.target = S.open.value; HINGE.frozen = true;
+    }
 
     // `?at=ms` advances the gesture by that much at a fixed 240Hz and then holds it still, so a
     // single frame of the real open can be captured. Stepping a fixed dt rather than sampling
@@ -1301,21 +1567,24 @@ function frame(now) {
     if (AT_MS !== null) {
       const n = Math.round(AT_MS / 1000 * 240);
       for (let i = 0; i < n; i++) {
-        S.open.step(1 / 240); S.lid.step(1 / 240);
+        S.open.step(1 / 240); HINGE.step(1 / 240);
+        if (HINGE.impact > 0) S.pitch.velocity += HINGE.impact * IMPACT_TILT;
         S.pitch.step(1 / 240); S.roll.step(1 / 240); S.needle.step(1 / 240); S.hub.step(1 / 240);
       }
       S.open.velocity = 0; S.open.target = S.open.value;
-      S.lid.velocity = 0;  S.lid.target = S.lid.value;
+      HINGE.frozen = true;
     }
   }
 
   aim();
-  [S.open, S.lid, S.pitch, S.roll, S.needle, S.hub].forEach(s => s.step(dt));
+  [S.open, S.pitch, S.roll, S.needle, S.hub].forEach(s => s.step(dt));
+  HINGE.step(dt);
+  if (HINGE.impact > 0) S.pitch.velocity += HINGE.impact * IMPACT_TILT;
   S.hover.forEach(s => s.step(dt));
 
   lidAngle = FREEZE !== null
     ? FREEZE * Math.PI / 180
-    : S.lid.value * LID_OPEN_ANGLE * Math.PI / 180;
+    : HINGE.angle;
 
   const hit = hitTest();
   hoveredSlice = hit >= 0 ? hit : null;
@@ -1330,7 +1599,7 @@ function frame(now) {
 window.addEventListener('resize', resize);
 window.addEventListener('pointermove', e => { pointer = { x: e.clientX, y: e.clientY }; });
 window.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { S.open.target = 0; S.lid.target = 0; }
+  if (e.key === 'Escape') { S.open.target = 0; HINGE.shut(); }
   if (/^[1-9]$/.test(e.key)) S.needle.target = (parseInt(e.key, 10) - 1) * step();
 });
 

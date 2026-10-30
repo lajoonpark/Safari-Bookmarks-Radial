@@ -54,6 +54,12 @@ struct SpringValue {
         velocity = newVelocity
     }
 
+    /// Adds to the spring's speed without moving it, like a tap on something already at rest. The
+    /// lid landing on its stop uses it to shake the case.
+    mutating func impulse(_ deltaVelocity: Double) {
+        velocity += deltaVelocity
+    }
+
     mutating func snap(to newValue: Double) {
         value = newValue
         target = newValue

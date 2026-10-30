@@ -78,22 +78,39 @@ public struct CompassMetrics: Equatable, Sendable {
 
     // MARK: Lid
 
-    /// Radius of the lid disc.
+    /// Outer radius of the lid.
     ///
-    /// Smaller than the case, because a lid closes *inside* the case's raised lip — the same
-    /// way a real pocket compass does. `CompassLid` keeps it tangent to the hinge line rather
-    /// than centred on the card, so a smaller disc still pivots on the case's rim with no gap
-    /// opening up as it swings.
+    /// Slightly inside the case's rim, because a lid closes into the case's raised lip the way a real
+    /// pocket compass does, and the brass lip is what you see around it when it is shut. It is
+    /// also the lid's own pivot: `CompassLid` keeps the hinge tangent to this rim, so a lid
+    /// smaller than the case still hangs from the case's back edge with no gap opening up.
     ///
-    /// 0.72 and 0.80 were both tried and both look wrong in the same way, though for a
-    /// geometry reason rather than an aesthetic one: `cardRadius / caseRadius` is 0.851, so a
-    /// lid smaller than that cannot cover the card it is meant to shut over. Shrinking the lid
-    /// to make the open instrument less top-heavy therefore makes the *closed* one physically
-    /// impossible. 0.87 is the smallest lid that genuinely closes, and the "too large" look is
-    /// dealt with by the open angle instead: at 120° the lid is foreshortened enough to read as
-    /// a plate leaning back rather than as a second dial lying flat. Open angle is the only
-    /// lever, precisely because this radius cannot come down.
-    public var lidRadius: CGFloat { caseRadius * 0.87 }
+    /// 0.95 rather than 1: the open lid stands toward the camera, and perspective magnifies it by
+    /// about 17% at the open angle, so a lid that is flush with the case when shut is drawn wider
+    /// than the case when open, which is the "second dial" look. Pulling it in by 5% cancels that
+    /// without leaving a visible step at the lip. Below `cardRadius / caseRadius` (0.851) the lid
+    /// could not cover the card, so there is room but not a lot; `testTheShutLidCoversTheCard`
+    /// holds the floor.
+    public var lidRadius: CGFloat { caseRadius * 0.95 }
+
+    /// How deep the dish is. A lid is a shallow pan, not a plate: this is the wall you see when it
+    /// is edge-on, and what makes it read as an object with a rim instead of a disc.
+    public var lidDepth: CGFloat { cardRadius * 0.105 }
+    /// Thickness of the wall, seen as the rim ring when the lid is open.
+    public var lidWall: CGFloat { cardRadius * 0.045 }
+    /// Thickness of the plate that closes the pan.
+    public var lidPlate: CGFloat { cardRadius * 0.018 }
+    /// The shoulder where the cover rolls over into the wall, as both a height and an inset.
+    public var lidChamfer: CGFloat { cardRadius * 0.040 }
+
+    /// Radius of the engraved plate inside the lid.
+    public var lidFloorRadius: CGFloat { lidRadius - lidWall }
+    /// Height of that plate above the rim plane.
+    public var lidFloorHeight: CGFloat { lidDepth - lidPlate }
+    /// Radius of the flat outside cover, inside the shoulder.
+    public var lidCoverRadius: CGFloat { lidRadius - lidChamfer }
+    /// Height at which the straight wall ends and the shoulder begins.
+    public var lidShoulderHeight: CGFloat { lidDepth - lidChamfer }
 
     /// How far the lid swings open.
     ///
@@ -131,10 +148,19 @@ public struct CompassMetrics: Equatable, Sendable {
         let camera = CompassCamera(eyeDistance: cardRadius * RadialTilt.eyeDistanceRatio)
         let lid = CompassLid(metrics: self, openness: angle / CompassMetrics.lidOpenAngle)
         var reach: CGFloat = 0
+        // The pan has depth, so the highest point is on the cover's edge or the wall's top, not
+        // the rim: sample all three rings.
+        let rings: [(radius: CGFloat, height: CGFloat)] = [
+            (lidRadius, 0),
+            (lidRadius, lidShoulderHeight),
+            (lidCoverRadius, lidDepth),
+        ]
         for step in 0...48 {
             let a = CGFloat(step) / 48 * 2 * .pi
-            let point = camera.project(lid.swing(lid.point(radius: lidRadius, angle: a))).point
-            reach = max(reach, -point.y)
+            for ring in rings {
+                let point = camera.project(lid.swing(lid.point(radius: ring.radius, angle: a, height: ring.height))).point
+                reach = max(reach, -point.y)
+            }
         }
         return reach
     }
@@ -144,10 +170,11 @@ public struct CompassMetrics: Equatable, Sendable {
 
     /// Shrinks the card until the whole instrument fits `available` points of height.
     ///
-    /// The user's radius setting is an upper bound, not a promise: an open compass is a little
-    /// over 4 card-radii tall, so the largest setting would run off the bottom of a laptop
-    /// screen. (It was 3.4 until the lid was enlarged to show its face; the taller lid moved the
-    /// top of the instrument up, and this is what keeps it on screen.)
+    /// The user's radius setting is an upper bound, not a promise: an open compass is about 4.4
+    /// card-radii tall, so the largest setting would run off the bottom of a laptop screen. (It was
+    /// 3.4 until the lid was enlarged to show its face, and 4 before the lid became a pan with a
+    /// depth of its own; the taller lid moved the top of the instrument up, and this is what keeps
+    /// it on screen.)
     /// The floor keeps the dial usable rather than elegant, because below about 110pt the slot
     /// numerals stop being legible and the keyboard mapping becomes guesswork.
     public func fitted(toHeight available: CGFloat) -> CompassMetrics {

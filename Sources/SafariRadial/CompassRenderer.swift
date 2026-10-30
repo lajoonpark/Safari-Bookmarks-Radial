@@ -63,7 +63,6 @@ final class CompassRenderer {
             context.beginTransparencyLayer(in: instrumentBounds(state), auxiliaryInfo: nil)
         }
         drawContactShadow(in: context, state: state)
-        drawLidShadow(in: context, state: state)
 
         // From here down everything is in card space: origin at the hub, y down, projected.
         drawCaseWall(in: context, state: state, metrics: m)
@@ -71,11 +70,6 @@ final class CompassRenderer {
         drawBrass(in: context, state: state, metrics: m)
         drawCard(in: context, state: state, metrics: m)
         drawCardPrinting(in: context, state: state, metrics: m)
-        // After the card, not before it. The barrel and its knuckles stand proud of the card's
-        // plane on the case's rim, and they overhang the card's edge by a few points; drawn
-        // underneath, the card painted over the knuckles and the hinge — and the rust in it —
-        // disappeared behind the dial.
-        drawHinge(in: context, state: state, metrics: m)
         drawSliceWash(in: context, state: state, metrics: m)
         drawNeedle(in: context, state: state, metrics: m)
         drawSliceLabels(in: context, state: state, metrics: m)
@@ -85,7 +79,13 @@ final class CompassRenderer {
         // card; swinging, its lower half passes in front of the card's near edge. Drawing it
         // before the card (as this used to) let the card paint over the lid, so the lid looked
         // clipped along a straight line for the whole first half of the opening swing.
+        //
+        // Its shadow goes down first, over everything printed on the case top, and the hinge goes on
+        // after it, because the barrel is what the lid hangs from: the knuckles stand proud of the
+        // case's back edge and the lid turns about them.
+        drawLidShadow(in: context, state: state)
         drawLid(in: context, state: state)
+        drawHinge(in: context, state: state, metrics: m)
         if layered {
             context.endTransparencyLayer()
         }
@@ -199,10 +199,13 @@ extension CompassRenderer {
     private func instrumentBounds(_ state: State) -> CGRect {
         let m = state.metrics
         let margin = m.cardRadius * 0.05
+        // The pan has depth, so its highest point is the cover's edge, not the rim.
         let lidTop = (0...96).map { step -> CGFloat in
             let angle = CGFloat(step) / 96 * 2 * .pi
-            let point = Point3D(radius: state.lid.radius, angle: angle)
-            return state.camera.project(state.lid.swing(point)).point.y
+            let rim = state.lid.point(radius: state.lid.radius, angle: angle)
+            let cover = state.lid.point(radius: m.lidCoverRadius, angle: angle, height: m.lidDepth)
+            return min(state.camera.project(state.lid.swing(rim)).point.y,
+                       state.camera.project(state.lid.swing(cover)).point.y)
         }.min() ?? 0
         let spread = contactShadowSpread(state)
         let half = m.caseRadius * 1.5 * spread
@@ -280,23 +283,27 @@ extension CompassRenderer {
         context.restoreGState()
     }
 
-    /// The lid's shadow on the case top.
+    /// The lid's shadow on the case top, in two parts.
     ///
-    /// Clipped to the case and kept shallow. A free-floating ellipse straddling the hinge is
-    /// what made the lid read as detached: it drew a dark band in the air between lid and box,
-    /// which the eye takes as a gap. Painted inside the brass instead, it lands on the object.
+    /// The cast part is the lid's silhouette thrown along the key light onto the case's crest. It
+    /// is attached at the hinge, slides across the dial as the lid rises, and thins out as the
+    /// lid stands clear, which is how a real shadow behaves and what makes the swing read as an
+    /// object passing over the card. The contact part is a darkening under the hinge that stays
+    /// once the lid is open: a leaning lid still shades the brass beneath it, and without it the
+    /// lid reads as hovering. Both are clipped to the case, so they land on the object rather than
+    /// in the air.
     private func drawLidShadow(in context: CGContext, state: State) {
         let angle = state.lid.angle
-        guard sin(angle) > 0.12 else { return }
+        guard angle > 0.04 else { return }
         let m = state.metrics
-        let near = min(1, max(0, (CGFloat(sin(angle)) - 0.12) / 0.6))
-        let radius = m.lidRadius
+        let lid = state.lid
+        let crest = lid.hingeZ
 
         context.saveGState()
         let silhouette = (0...96).map { step -> CGPoint in
-            let angle = CGFloat(step) / 96 * 2 * .pi
+            let a = CGFloat(step) / 96 * 2 * .pi
             return state.camera.project(
-                x: m.caseRadius * sin(angle), y: -m.caseRadius * cos(angle), z: m.cardDepth
+                x: m.caseRadius * sin(a), y: -m.caseRadius * cos(a), z: m.cardDepth
             )
         }
         let clip = CGMutablePath()
@@ -305,163 +312,545 @@ extension CompassRenderer {
         context.addPath(clip)
         context.clip()
 
-        let hinge = state.camera.project(Point3D(x: 0, y: state.lid.hingeY, z: 0)).point
-        let top = hinge.y - radius * 0.02
-        if let gradient = CGGradient(
-            colorsSpace: CGColorSpaceCreateDeviceRGB(),
-            colors: [
-                NSColor(calibratedRed: 0.094, green: 0.063, blue: 0.031, alpha: 1)
-                    .withAlphaComponent(0.30 * near).cgColor,
-                NSColor(calibratedRed: 0.094, green: 0.063, blue: 0.031, alpha: 1)
-                    .withAlphaComponent(0.13 * near).cgColor,
-                NSColor(calibratedRed: 0.094, green: 0.063, blue: 0.031, alpha: 1)
-                    .withAlphaComponent(0).cgColor,
-            ] as CFArray,
-            locations: [0, 0.45, 1] as [CGFloat]
-        ) {
-            context.saveGState()
-            context.clip(to: CGRect(x: -m.caseRadius, y: top,
-                                    width: m.caseRadius * 2, height: radius * 0.40))
-            context.drawLinearGradient(
-                gradient,
-                start: CGPoint(x: 0, y: top),
-                end: CGPoint(x: 0, y: top + radius * 0.34),
-                options: []
-            )
-            context.restoreGState()
+        // Cast shadow: the pan's rim and its top edge, thrown down the light.
+        let drift = CGPoint(x: 0.34, y: 0.46)
+        var thrown: [CGPoint] = []
+        for height in [CGFloat(0), m.lidDepth] {
+            for step in 0..<48 {
+                let a = CGFloat(step) / 48 * 2 * .pi
+                let world = lid.swing(lid.point(radius: m.lidRadius, angle: a, height: height))
+                let up = max(0, world.z - crest)
+                thrown.append(state.camera.project(
+                    Point3D(x: world.x + drift.x * up, y: world.y + drift.y * up, z: crest)
+                ).point)
+            }
+        }
+        let hull = convexHull(thrown)
+        if hull.count >= 3 {
+            var centre = CGPoint.zero
+            for point in hull {
+                centre.x += point.x
+                centre.y += point.y
+            }
+            centre.x /= CGFloat(hull.count)
+            centre.y /= CGFloat(hull.count)
+            // A high lid throws a faint, wide shadow: fade it as the lid lifts clear.
+            let fade = max(0, 1 - max(0, angle - 0.35) / 1.15)
+            // Soft edge by stacking slightly larger copies, which costs nothing and needs no blur.
+            for pass in 0..<5 {
+                let grow = 1 + CGFloat(pass) * 0.035
+                let outline = CGMutablePath()
+                outline.addLines(between: hull.map {
+                    CGPoint(x: centre.x + ($0.x - centre.x) * grow, y: centre.y + ($0.y - centre.y) * grow)
+                })
+                outline.closeSubpath()
+                context.addPath(outline)
+                context.setFillColor(
+                    NSColor(calibratedRed: 0.055, green: 0.035, blue: 0.016, alpha: 0.085 * fade).cgColor
+                )
+                context.fillPath()
+            }
+        }
+
+        // Contact shadow under the hinge.
+        let near = min(1, max(0, (CGFloat(sin(angle)) - 0.12) / 0.6))
+        if near > 0 {
+            let hinge = state.camera.project(Point3D(x: 0, y: lid.hingeY, z: 0)).point
+            let top = hinge.y - m.caseRadius * 0.02
+            let shade = NSColor(calibratedRed: 0.094, green: 0.063, blue: 0.031, alpha: 1)
+            if let gradient = CGGradient(
+                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: [
+                    shade.withAlphaComponent(0.34 * near).cgColor,
+                    shade.withAlphaComponent(0.14 * near).cgColor,
+                    shade.withAlphaComponent(0).cgColor,
+                ] as CFArray,
+                locations: [0, 0.45, 1] as [CGFloat]
+            ) {
+                context.clip(to: CGRect(x: -m.caseRadius, y: top, width: m.caseRadius * 2, height: m.caseRadius * 0.36))
+                context.drawLinearGradient(
+                    gradient,
+                    start: CGPoint(x: 0, y: top),
+                    end: CGPoint(x: 0, y: top + m.caseRadius * 0.30),
+                    options: []
+                )
+            }
         }
         context.restoreGState()
+    }
+
+    /// The convex hull of a point set (Andrew's monotone chain): the outline of a shadow thrown by a
+    /// solid, however many rims went into it.
+    private func convexHull(_ input: [CGPoint]) -> [CGPoint] {
+        let points = input.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
+        guard points.count > 2 else { return points }
+        func cross(_ o: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {
+            (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+        }
+        var lower: [CGPoint] = []
+        for point in points {
+            while lower.count >= 2, cross(lower[lower.count - 2], lower[lower.count - 1], point) <= 0 {
+                lower.removeLast()
+            }
+            lower.append(point)
+        }
+        var upper: [CGPoint] = []
+        for point in points.reversed() {
+            while upper.count >= 2, cross(upper[upper.count - 2], upper[upper.count - 1], point) <= 0 {
+                upper.removeLast()
+            }
+            upper.append(point)
+        }
+        lower.removeLast()
+        upper.removeLast()
+        return lower + upper
     }
 }
 
 // MARK: - The lid
 
+// Light. The key comes from the upper left and toward the viewer. The fill is the pale card
+// throwing warm light back up, which is why the inside of a leaning lid glows instead of going
+// to mud. (View space: x right, y down, z toward the viewer.)
+private func unitVector(_ x: CGFloat, _ y: CGFloat, _ z: CGFloat) -> Point3D {
+    let length = sqrt(x * x + y * y + z * z)
+    return Point3D(x: x / length, y: y / length, z: z / length)
+}
+
+private func dotProduct(_ a: Point3D, _ b: Point3D) -> CGFloat {
+    a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+private let lidKeyLight = unitVector(-0.42, -0.58, 0.70)
+private let lidFillLight = unitVector(0.10, 0.78, 0.55)
+private let lidHalfVector = unitVector(lidKeyLight.x, lidKeyLight.y, lidKeyLight.z + 1)
+
+/// How much light a face with this view-space normal catches, 0 to 1.
+private func lidIntensity(_ normal: Point3D, shine: CGFloat) -> CGFloat {
+    let key = max(0, dotProduct(normal, lidKeyLight))
+    let fill = max(0, dotProduct(normal, lidFillLight))
+    let spec = pow(max(0, dotProduct(normal, lidHalfVector)), 26)
+    return 0.20 + 0.56 * key + 0.36 * fill + shine * spec
+}
+
+/// Brass as a function of how much light it catches. Warm throughout: the highlights stay cream
+/// and the shadows go olive rather than grey.
+private func lidBrass(_ intensity: CGFloat, alpha: CGFloat = 1) -> NSColor {
+    let stops: [(at: CGFloat, r: CGFloat, g: CGFloat, b: CGFloat)] = [
+        (0.00, 26, 19, 10), (0.22, 58, 44, 24), (0.42, 96, 74, 40), (0.60, 133, 101, 56),
+        (0.78, 179, 145, 90), (0.92, 213, 192, 143), (1.00, 238, 223, 180),
+    ]
+    let t = min(1, max(0, intensity))
+    var k = 1
+    while k < stops.count - 1 && stops[k].at < t { k += 1 }
+    let from = stops[k - 1]
+    let to = stops[k]
+    let u = (t - from.at) / (to.at - from.at)
+    return NSColor(
+        calibratedRed: (from.r + (to.r - from.r) * u) / 255,
+        green: (from.g + (to.g - from.g) * u) / 255,
+        blue: (from.b + (to.b - from.b) * u) / 255,
+        alpha: alpha
+    )
+}
+
+/// Cheap, stable pseudo-noise, so no two ridges of the milled wall are quite alike.
+private func lidWobble(_ index: Int) -> CGFloat {
+    let s = sin(Double(index) * 12.9898 + 4.1) * 43758.5453
+    return CGFloat(s - s.rounded(.down))
+}
+
+/// A soft radial blot of colour: the building block of tarnish, polish and bloom.
+private func lidGlow(
+    _ context: CGContext,
+    at point: CGPoint,
+    radius: CGFloat,
+    stops: [(at: CGFloat, colour: NSColor)]
+) {
+    guard let gradient = CGGradient(
+        colorsSpace: CGColorSpaceCreateDeviceRGB(),
+        colors: stops.map { $0.colour.cgColor } as CFArray,
+        locations: stops.map { $0.at }
+    ) else { return }
+    context.drawRadialGradient(
+        gradient,
+        startCenter: point, startRadius: 0,
+        endCenter: point, endRadius: radius,
+        options: []
+    )
+}
+
+/// One face of the lid's mesh, placed in view space.
+private struct LidFace {
+    enum Kind { case wall, shoulder, rim, inner, cover, floor }
+    let kind: Kind
+    let index: Int
+    /// The outward normal, in view space.
+    let normal: Point3D
+    /// View-space depth of the face's centre. Larger is nearer.
+    let depth: CGFloat
+    let points: [CGPoint]
+}
+
 extension CompassRenderer {
 
-    private func drawLid(in context: CGContext, state: State) {
+    /// The lid as a mesh, in its own frame, swung about the hinge and placed for the camera.
+    ///
+    /// A shallow pan: a milled wall, a chamfered shoulder, a flat cover on the outside, and on the
+    /// inside the engraved plate and the wall's lip. Faces that point away from the eye are
+    /// dropped and the rest are sorted far to near, which is all the depth handling a shape this
+    /// simple needs. It is also why the lid can show its cover on the way up, turn edge-on and
+    /// come over to show the engraving.
+    private func lidFaces(_ state: State) -> [LidFace] {
+        let m = state.metrics
         let lid = state.lid
-        let radius = lid.radius
-        // No fade of its own. The lid is part of the case, so the case layer in `draw` fades it with
-        // everything else. Shut, it stays opaque over the card until that layer takes it out.
+        let camera = state.camera
+        let eye = camera.eyeDistance
+        let segments = 144
+        var faces: [LidFace] = []
 
+        func add(_ kind: LidFace.Kind, _ index: Int, _ local: [Point3D], _ normal: Point3D) {
+            var view: [Point3D] = []
+            view.reserveCapacity(local.count)
+            var sum = Point3D.zero
+            for point in local {
+                let v = camera.rotate(lid.swing(point))
+                view.append(v)
+                sum.x += v.x
+                sum.y += v.y
+                sum.z += v.z
+            }
+            let count = CGFloat(local.count)
+            let centre = Point3D(x: sum.x / count, y: sum.y / count, z: sum.z / count)
+            let facing = camera.rotate(lid.swingDirection(normal))
+            // Visible only if it points at the eye. The eye is at `eye` on the view axis, so under
+            // perspective this has to be measured from the face, not from the axis.
+            let toEye = Point3D(x: -centre.x, y: -centre.y, z: eye - centre.z)
+            guard dotProduct(facing, toEye) > 0 else { return }
+            let points = view.map { v -> CGPoint in
+                let scale = eye / (eye - v.z)
+                return CGPoint(x: v.x * scale, y: v.y * scale)
+            }
+            faces.append(LidFace(kind: kind, index: index, normal: facing, depth: centre.z, points: points))
+        }
+
+        func at(_ radius: CGFloat, _ angle: CGFloat, _ height: CGFloat) -> Point3D {
+            lid.point(radius: radius, angle: angle, height: height)
+        }
+
+        let outer = m.lidRadius
+        for index in 0..<segments {
+            let a0 = CGFloat(index) / CGFloat(segments) * 2 * .pi
+            let a1 = CGFloat(index + 1) / CGFloat(segments) * 2 * .pi
+            let mid = (a0 + a1) / 2
+            let rx = sin(mid)
+            let ry = -cos(mid)
+            add(.wall, index, [
+                at(outer, a0, 0), at(outer, a1, 0),
+                at(outer, a1, m.lidShoulderHeight), at(outer, a0, m.lidShoulderHeight),
+            ], Point3D(x: rx, y: ry, z: 0))
+            add(.shoulder, index, [
+                at(outer, a0, m.lidShoulderHeight), at(outer, a1, m.lidShoulderHeight),
+                at(m.lidCoverRadius, a1, m.lidDepth), at(m.lidCoverRadius, a0, m.lidDepth),
+            ], Point3D(x: rx * 0.707, y: ry * 0.707, z: 0.707))
+            add(.rim, index, [
+                at(outer, a0, 0), at(outer, a1, 0),
+                at(m.lidFloorRadius, a1, 0), at(m.lidFloorRadius, a0, 0),
+            ], Point3D(x: 0, y: 0, z: -1))
+            add(.inner, index, [
+                at(m.lidFloorRadius, a0, 0), at(m.lidFloorRadius, a1, 0),
+                at(m.lidFloorRadius, a1, m.lidFloorHeight), at(m.lidFloorRadius, a0, m.lidFloorHeight),
+            ], Point3D(x: -rx, y: -ry, z: 0))
+        }
+        let coverRing = (0..<segments).map {
+            at(m.lidCoverRadius, CGFloat($0) / CGFloat(segments) * 2 * .pi, m.lidDepth)
+        }
+        add(.cover, 0, coverRing, Point3D(x: 0, y: 0, z: 1))
+        let floorRing = (0..<segments).map {
+            at(m.lidFloorRadius, CGFloat($0) / CGFloat(segments) * 2 * .pi, m.lidFloorHeight)
+        }
+        add(.floor, 0, floorRing, Point3D(x: 0, y: 0, z: -1))
+
+        return faces.sorted { $0.depth < $1.depth }
+    }
+
+    private func drawLid(in context: CGContext, state: State) {
+        let faces = lidFaces(state)
+        for face in faces {
+            switch face.kind {
+            case .cover: paintLidCover(face, in: context, state: state)
+            case .floor: paintLidFloor(face, in: context, state: state)
+            default: paintLidBand(face, in: context)
+            }
+        }
+        paintLidEdges(faces, in: context, state: state)
+    }
+
+    /// A strip of the wall, shoulder or rim: flat colour from the light it catches.
+    private func paintLidBand(_ face: LidFace, in context: CGContext) {
+        var intensity = lidIntensity(face.normal, shine: face.kind == .shoulder ? 0.30 : 0.10)
+        switch face.kind {
+        case .wall:
+            // Milled edge: alternate ridges, with a little unevenness so it is not a printed pattern.
+            intensity *= (face.index % 2 == 0 ? 1.02 : 0.95) * (0.985 + lidWobble(face.index) * 0.03)
+        case .shoulder:
+            intensity += 0.05
+        case .inner:
+            intensity *= 0.78
+        case .rim:
+            intensity *= 0.92
+        default:
+            break
+        }
+        let colour = lidBrass(intensity)
+        fill(face.points, context, colour)
+        // The same colour as a hairline: adjacent polygons otherwise leave seams of backdrop.
+        stroke(face.points + [face.points[0]], context, colour, width: 0.7)
+    }
+
+    /// The line where the lid meets the case, and the lit crest of the shoulder.
+    private func paintLidEdges(_ faces: [LidFace], in context: CGContext, state: State) {
+        let radius = state.metrics.cardRadius
+        for face in faces where face.kind == .wall {
+            line(face.points[0], face.points[1], context,
+                 NSColor(calibratedRed: 0.071, green: 0.047, blue: 0.020, alpha: 0.55),
+                 width: max(0.9, radius * 0.006))
+        }
+        for face in faces where face.kind == .shoulder {
+            let lit = min(1, max(0, lidIntensity(face.normal, shine: 0.5) - 0.35))
+            line(face.points[3], face.points[2], context,
+                 NSColor(calibratedRed: 1, green: 0.953, blue: 0.831, alpha: 0.10 + 0.55 * lit),
+                 width: max(0.8, radius * 0.005))
+            line(face.points[0], face.points[1], context,
+                 NSColor(calibratedRed: 1, green: 0.925, blue: 0.769, alpha: 0.06 + 0.30 * lit),
+                 width: max(0.8, radius * 0.005))
+        }
+    }
+
+    private func bounds(of points: [CGPoint]) -> CGRect {
+        var rect = CGRect(origin: points[0], size: .zero)
+        for point in points { rect = rect.union(CGRect(origin: point, size: .zero)) }
+        return rect
+    }
+
+    /// The outside of the lid: a spun cover with a rolled border, a thumb-polished patch where the
+    /// hand takes it, and the tarnish a cover collects from a century in a pocket. Lighter than
+    /// the inside, because this is the side that gets handled and wiped.
+    private func paintLidCover(_ face: LidFace, in context: CGContext, state: State) {
+        let m = state.metrics
+        let lid = state.lid
+        let radius = m.lidCoverRadius
+        let height = m.lidDepth
         func lidPoint(_ angle: CGFloat, _ r: CGFloat) -> CGPoint {
-            state.camera.project(lid.swing(Point3D(radius: r, angle: angle))).point
+            state.camera.project(lid.swing(lid.point(radius: r, angle: angle, height: height))).point
         }
-        /// A point given in the lid's own plane, cartesian, origin at its boss.
         func lidFlat(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            state.camera.project(lid.swing(Point3D(x: x, y: y, z: 0))).point
+            state.camera.project(lid.swing(Point3D(x: x, y: y, z: lid.hingeZ + height))).point
         }
+        let box = bounds(of: face.points)
+        let centre = CGPoint(x: box.midX, y: box.midY)
 
-        let rim = (0...96).map { lidPoint(CGFloat($0) / 96 * 2 * .pi, radius) }
-        let rimPath = CGMutablePath()
-        rimPath.addLines(between: rim)
-        rimPath.closeSubpath()
-
-        var bounds = CGRect(origin: rim[0], size: .zero)
-        for point in rim { bounds = bounds.union(CGRect(origin: point, size: .zero)) }
-        let centre = CGPoint(x: bounds.midX, y: bounds.midY)
-
-        // The plate's milled edge, as a thin crescent beneath the face. It has to be thin and
-        // warm: a thick dark band here reads as a gap between lid and case rather than as
-        // metal, and makes the lid look like it is floating.
         context.saveGState()
-        context.translateBy(x: 0, y: radius * 0.012 * sin(lid.angle))
-        context.addPath(rimPath)
-        context.setFillColor(NSColor(calibratedRed: 0.239, green: 0.184, blue: 0.110, alpha: 1).cgColor)
+        let outline = CGMutablePath()
+        outline.addLines(between: face.points)
+        outline.closeSubpath()
+        context.addPath(outline)
+        context.setFillColor(lidBrass(lidIntensity(face.normal, shine: 0.24)).cgColor)
         context.fillPath()
-        context.restoreGState()
-
-        // Face. The lid leans away from the viewer, so its inside is a step darker than the
-        // case's bright top — lit like the case it reads as a plate hovering over the brass.
-        context.saveGState()
-        context.addPath(rimPath)
-        context.setFillColor(CompassTheme.brassMid.cgColor)
-        context.fillPath()
-        context.addPath(rimPath)
+        context.addPath(outline)
         context.clip()
 
-        // Light comes from the lower left here: the plate tips *away*, so the near edge is
-        // the shaded one and the far edge catches the light.
-        if let gradient = CGGradient(
+        // Spun finish.
+        for step in 0..<30 {
+            let t = CGFloat(step) / 30
+            let ring = (0...72).map { lidPoint(CGFloat($0) / 72 * 2 * .pi, radius * (0.10 + 0.88 * t)) }
+            let strength = 0.045 * (1 - t * 0.5)
+            let colour: NSColor = step % 2 == 0
+                ? NSColor.black.withAlphaComponent(strength * 1.1)
+                : NSColor(calibratedRed: 1, green: 0.965, blue: 0.878, alpha: strength)
+            stroke(ring, context, colour, width: max(0.6, radius * 0.0036))
+        }
+
+        // The sheen follows the light across the plate as it turns.
+        if let sheen = CGGradient(
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
             colors: [
-                NSColor(calibratedRed: 0.290, green: 0.235, blue: 0.114, alpha: 1).cgColor,
-                NSColor(calibratedRed: 0.431, green: 0.357, blue: 0.224, alpha: 1).cgColor,
-                NSColor(calibratedRed: 0.545, green: 0.463, blue: 0.286, alpha: 1).cgColor,
-                NSColor(calibratedRed: 0.490, green: 0.416, blue: 0.267, alpha: 1).cgColor,
+                NSColor(calibratedRed: 1, green: 0.965, blue: 0.863, alpha: 0.22).cgColor,
+                NSColor(calibratedRed: 1, green: 0.965, blue: 0.863, alpha: 0.05).cgColor,
+                NSColor(calibratedRed: 0.078, green: 0.055, blue: 0.027, alpha: 0.16).cgColor,
             ] as CFArray,
-            locations: [0, 0.20, 0.52, 1] as [CGFloat]
+            locations: [0, 0.45, 1] as [CGFloat]
+        ) {
+            let lit = lidFlat(-radius * 0.38, -radius * 0.34)
+            context.drawRadialGradient(
+                sheen,
+                startCenter: lit, startRadius: radius * 0.03,
+                endCenter: lit, endRadius: radius * 1.05,
+                options: [.drawsAfterEndLocation]
+            )
+        }
+
+        // Rolled border, and a central roundel.
+        for (k, colour, width) in [
+            (CGFloat(0.900), NSColor.black.withAlphaComponent(0.30), CGFloat(1.1)),
+            (CGFloat(0.885), NSColor.white.withAlphaComponent(0.16), CGFloat(0.8)),
+            (CGFloat(0.300), NSColor.black.withAlphaComponent(0.20), CGFloat(0.9)),
+            (CGFloat(0.288), NSColor.white.withAlphaComponent(0.12), CGFloat(0.8)),
+        ] {
+            let ring = (0...96).map { lidPoint(CGFloat($0) / 96 * 2 * .pi, radius * k) }
+            stroke(ring, context, colour, width: width)
+        }
+        let cream = NSColor(calibratedRed: 1, green: 0.957, blue: 0.839, alpha: 1)
+        lidGlow(context, at: lidFlat(0, 0), radius: radius * 0.10, stops: [
+            (0, cream.withAlphaComponent(0.16)),
+            (0.6, NSColor(calibratedRed: 0.47, green: 0.376, blue: 0.220, alpha: 0.10)),
+            (1, NSColor(calibratedRed: 0.118, green: 0.078, blue: 0.031, alpha: 0.20)),
+        ])
+
+        // Thumb polish at the front edge.
+        lidGlow(context, at: lidPoint(.pi, radius * 0.80), radius: radius * 0.36, stops: [
+            (0, cream.withAlphaComponent(0.20)),
+            (0.5, cream.withAlphaComponent(0.07)),
+            (1, cream.withAlphaComponent(0)),
+        ])
+
+        // Tarnish, broad then sharp.
+        for blotch in grain.lidUnevenness(radius: radius) {
+            lidGlow(context, at: lidFlat(-blotch.x * radius, blotch.y * radius),
+                    radius: blotch.radius * radius * 1.3, stops: [
+                (0, CompassTheme.patina.withAlphaComponent(blotch.alpha * CompassTheme.wearGain * 0.38)),
+                (1, CompassTheme.patina.withAlphaComponent(0)),
+            ])
+        }
+        for blot in grain.lidPatina(radius: radius) {
+            drawWear(blot, at: lidFlat(-blot.x * radius, -blot.y * radius), unit: radius * 1.15,
+                     colour: CompassTheme.patina, alpha: CompassTheme.wearGain * 0.45, in: context)
+        }
+
+        // The cover rolls over into its shoulder.
+        if let vignette = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: [
+                NSColor(calibratedRed: 0.094, green: 0.067, blue: 0.035, alpha: 0).cgColor,
+                NSColor(calibratedRed: 0.094, green: 0.067, blue: 0.035, alpha: 0.30).cgColor,
+            ] as CFArray,
+            locations: [0, 1] as [CGFloat]
+        ) {
+            context.drawRadialGradient(
+                vignette,
+                startCenter: centre, startRadius: radius * 0.6,
+                endCenter: centre, endRadius: radius * 1.04,
+                options: [.drawsAfterEndLocation]
+            )
+        }
+        context.restoreGState()
+    }
+
+    /// The inside of the lid: the engraved plate, lit mostly by the card below it.
+    private func paintLidFloor(_ face: LidFace, in context: CGContext, state: State) {
+        let m = state.metrics
+        let lid = state.lid
+        let radius = m.lidFloorRadius
+        let height = m.lidFloorHeight
+        func lidPoint(_ angle: CGFloat, _ r: CGFloat) -> CGPoint {
+            state.camera.project(lid.swing(lid.point(radius: r, angle: angle, height: height))).point
+        }
+        func lidFlat(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            state.camera.project(lid.swing(Point3D(x: x, y: y, z: lid.hingeZ + height))).point
+        }
+        let box = bounds(of: face.points)
+        let centre = CGPoint(x: box.midX, y: box.midY)
+        let extent = max(box.width, box.height)
+
+        context.saveGState()
+        let outline = CGMutablePath()
+        outline.addLines(between: face.points)
+        outline.closeSubpath()
+        context.addPath(outline)
+        context.setFillColor(lidBrass(lidIntensity(face.normal, shine: 0.10) * 0.94).cgColor)
+        context.fillPath()
+        context.addPath(outline)
+        context.clip()
+
+        // Depth: the plate is darker toward the far end of the dish, which is further from the
+        // card's glow.
+        if let depth = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: [
+                NSColor(calibratedRed: 1, green: 0.941, blue: 0.784, alpha: 0.05).cgColor,
+                NSColor(calibratedRed: 0.157, green: 0.110, blue: 0.047, alpha: 0).cgColor,
+                NSColor(calibratedRed: 0.110, green: 0.075, blue: 0.031, alpha: 0.30).cgColor,
+            ] as CFArray,
+            locations: [0, 0.55, 1] as [CGFloat]
         ) {
             context.drawLinearGradient(
-                gradient,
-                start: CGPoint(x: bounds.maxX, y: bounds.maxY),
-                end: CGPoint(x: bounds.minX, y: bounds.minY),
+                depth,
+                start: CGPoint(x: 0, y: box.maxY), end: CGPoint(x: 0, y: box.minY),
                 options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
             )
         }
 
-        // Turned finish: alternating lit and shadowed bands, tightening toward the bead, because
-        // a spun surface catches light on each ridge. Single dark rings read as a bullseye.
-        let grooves = 34
-        for step in 0..<grooves {
-            let t = CGFloat(step) / CGFloat(grooves)
-            let groove = radius * (0.26 + 0.70 * t)
-            let ring = (0...60).map { lidPoint(CGFloat($0) / 60 * 2 * .pi, groove) }
-            let strength = (0.05 + 0.05 * (1 - t))
+        // Turned finish: bands rather than rings. A spun surface catches light on each ridge.
+        for step in 0..<26 {
+            let t = CGFloat(step) / 26
+            let groove = radius * (0.16 + 0.82 * pow(t, 0.86))
+            let ring = (0...72).map { lidPoint(CGFloat($0) / 72 * 2 * .pi, groove) }
+            let fade = 1 - t * 0.55
             let colour: NSColor = step % 2 == 0
-                ? NSColor.black.withAlphaComponent(strength)
-                : NSColor(calibratedRed: 1, green: 0.965, blue: 0.871, alpha: 1)
-                    .withAlphaComponent(strength)
-            stroke(ring, context, colour, width: max(0.7, radius * 0.0055))
+                ? NSColor(calibratedRed: 0.118, green: 0.086, blue: 0.043, alpha: 0.045 * fade)
+                : NSColor(calibratedRed: 1, green: 0.969, blue: 0.878, alpha: 0.030 * fade)
+            stroke(ring, context, colour, width: max(0.6, radius * 0.0038))
+        }
+        // Tool chatter: a few bright arcs, off-centre, as though the plate was spun by hand.
+        for (from, to, alpha) in [(CGFloat(0.30), CGFloat(0.52), CGFloat(0.05)),
+                                  (CGFloat(0.55), CGFloat(0.86), CGFloat(0.04)),
+                                  (CGFloat(0.74), CGFloat(0.97), CGFloat(0.035))] {
+            let arc = (0...40).map { lidPoint(from + (to - from) * CGFloat($0) / 40, radius * 0.90) }
+            stroke(arc, context, NSColor(calibratedRed: 1, green: 0.973, blue: 0.894, alpha: alpha),
+                   width: radius * 0.010)
         }
 
-        // Specular sweep across the far side, and a vignette into the bead, so the plate turns
-        // over into its own edge instead of ending at a line.
-        if let sheen = CGGradient(
+        // The card's glow, pooled low in the plate, and a soft shoulder into the wall.
+        if let glow = CGGradient(
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
             colors: [
-                NSColor(calibratedRed: 1, green: 0.965, blue: 0.863, alpha: 1).withAlphaComponent(0.20).cgColor,
-                NSColor(calibratedRed: 1, green: 0.965, blue: 0.863, alpha: 1).withAlphaComponent(0.05).cgColor,
-                NSColor(calibratedRed: 0.078, green: 0.055, blue: 0.027, alpha: 1).withAlphaComponent(0.18).cgColor,
+                NSColor(calibratedRed: 1, green: 0.933, blue: 0.784, alpha: 0.15).cgColor,
+                NSColor(calibratedRed: 1, green: 0.933, blue: 0.784, alpha: 0.04).cgColor,
+                NSColor(calibratedRed: 0.078, green: 0.055, blue: 0.027, alpha: 0.10).cgColor,
             ] as CFArray,
-            locations: [0, 0.40, 1] as [CGFloat]
+            locations: [0, 0.5, 1] as [CGFloat]
         ) {
             context.drawRadialGradient(
-                sheen,
-                startCenter: CGPoint(x: bounds.minX + bounds.width * 0.34,
-                                     y: bounds.maxY - bounds.height * 0.34),
-                startRadius: radius * 0.04,
-                endCenter: centre,
-                endRadius: max(bounds.width, bounds.height) * 0.58,
-                options: []
+                glow,
+                startCenter: CGPoint(x: centre.x, y: box.maxY - box.height * 0.18), startRadius: radius * 0.05,
+                endCenter: centre, endRadius: extent * 0.62,
+                options: [.drawsAfterEndLocation]
             )
         }
         if let vignette = CGGradient(
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
             colors: [
-                NSColor.black.withAlphaComponent(0).cgColor,
-                NSColor.black.withAlphaComponent(0.10).cgColor,
-                NSColor.black.withAlphaComponent(0.42).cgColor,
+                NSColor(calibratedRed: 0.094, green: 0.067, blue: 0.035, alpha: 0).cgColor,
+                NSColor(calibratedRed: 0.094, green: 0.067, blue: 0.035, alpha: 0.10).cgColor,
+                NSColor(calibratedRed: 0.094, green: 0.067, blue: 0.035, alpha: 0.38).cgColor,
             ] as CFArray,
             locations: [0, 0.72, 1] as [CGFloat]
         ) {
             context.drawRadialGradient(
                 vignette,
-                startCenter: centre,
-                startRadius: radius * 0.55,
-                endCenter: centre,
-                endRadius: radius * 1.02,
-                options: []
+                startCenter: centre, startRadius: radius * 0.55,
+                endCenter: centre, endRadius: radius * 1.02,
+                options: [.drawsAfterEndLocation]
             )
         }
 
-        // Engraved double border inside the bead: a dark cut with a lit lower lip.
-        for (r, colour, width) in [
-            (radius * 0.855, NSColor.black.withAlphaComponent(0.30), CGFloat(1.1)),
-            (radius * 0.815, NSColor.black.withAlphaComponent(0.22), CGFloat(0.9)),
-            (radius * 0.800, NSColor.white.withAlphaComponent(0.13), CGFloat(0.8)),
+        // Engraved double border inside the wall: a dark cut with a lit lower lip.
+        for (k, colour, width) in [
+            (CGFloat(0.855), NSColor.black.withAlphaComponent(0.30), CGFloat(1.1)),
+            (CGFloat(0.815), NSColor.black.withAlphaComponent(0.22), CGFloat(0.9)),
+            (CGFloat(0.800), NSColor.white.withAlphaComponent(0.13), CGFloat(0.8)),
         ] {
-            let ring = (0...96).map { lidPoint(CGFloat($0) / 96 * 2 * .pi, r) }
+            let ring = (0...96).map { lidPoint(CGFloat($0) / 96 * 2 * .pi, radius * k) }
             stroke(ring, context, colour, width: width)
         }
 
@@ -470,62 +859,63 @@ extension CompassRenderer {
         // Maker's mark, struck into the plate below the rose.
         drawText(
             "SAFARI  RADIAL",
-            at: lidFlat(0, radius * 0.50),
+            at: lidFlat(0, radius * 0.705),
             scale: min(1.0, max(0.62, abs(cos(lid.angle)) + 0.55)),
-            font: CompassTheme.serif(max(5.5, radius * 0.052), .semibold),
-            colour: NSColor.black.withAlphaComponent(0.30),
+            font: CompassTheme.serif(max(5.2, radius * 0.044), .semibold),
+            colour: NSColor.black.withAlphaComponent(0.34),
             in: context
         )
 
-        // Broad mottling first, then the sharper tarnish over it, so the lid's face carries the
-        // same unevenness as the card rather than reading as a clean plate.
-        for blotch in grain.lidUnevenness(radius: radius) {
-            let point = lidFlat(blotch.x * radius, blotch.y * radius)
-            let spread = blotch.radius * radius * 1.1
-            guard let gradient = CGGradient(
-                colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                colors: [
-                    CompassTheme.patina.withAlphaComponent(blotch.alpha * CompassTheme.wearGain).cgColor,
-                    CompassTheme.patina.withAlphaComponent(0).cgColor,
-                ] as CFArray,
-                locations: [0, 1]
-            ) else { continue }
-            context.saveGState()
-            context.translateBy(x: point.x, y: point.y)
+        // Even tarnish across the plate, warm rather than grey.
+        if let tarnish = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: [
+                NSColor(calibratedRed: 0.376, green: 0.290, blue: 0.157, alpha: 0.02).cgColor,
+                NSColor(calibratedRed: 0.345, green: 0.259, blue: 0.141, alpha: 0.10).cgColor,
+                NSColor(calibratedRed: 0.298, green: 0.220, blue: 0.118, alpha: 0.20).cgColor,
+                NSColor(calibratedRed: 0.227, green: 0.173, blue: 0.094, alpha: 0.30).cgColor,
+            ] as CFArray,
+            locations: [0, 0.55, 0.86, 1] as [CGFloat]
+        ) {
             context.drawRadialGradient(
-                gradient,
-                startCenter: .zero, startRadius: 0,
-                endCenter: .zero, endRadius: spread,
-                options: []
+                tarnish,
+                startCenter: centre, startRadius: radius * 0.10,
+                endCenter: centre, endRadius: radius * 1.02,
+                options: [.drawsAfterEndLocation]
             )
-            context.restoreGState()
         }
 
-        // Tarnish, weighted to the outer third where a thumb never reaches.
+        // Broad mottling first, then the sharper patina over it.
+        for blotch in grain.lidUnevenness(radius: radius) {
+            lidGlow(context, at: lidFlat(blotch.x * radius, blotch.y * radius),
+                    radius: blotch.radius * radius * 1.1, stops: [
+                (0, CompassTheme.patina.withAlphaComponent(blotch.alpha * CompassTheme.wearGain)),
+                (1, CompassTheme.patina.withAlphaComponent(0)),
+            ])
+        }
         for blot in grain.lidPatina(radius: radius) {
-            let point = lidFlat(blot.x * radius, blot.y * radius)
-            drawWear(blot, at: point, unit: radius * 1.15, colour: CompassTheme.patina,
-                     alpha: CompassTheme.wearGain, in: context)
+            drawWear(blot, at: lidFlat(blot.x * radius, blot.y * radius), unit: radius * 1.15,
+                     colour: CompassTheme.patina, alpha: CompassTheme.wearGain, in: context)
         }
-        // Rust, only along the hinge seam where moisture collects.
+
+        // Rust creeps from the hinge seam toward the plate, and is spotted only where moisture
+        // collects.
+        let rustColour = NSColor(calibratedRed: 0.478, green: 0.243, blue: 0.118, alpha: 1)
+        lidGlow(context, at: lidPoint(.pi, radius), radius: radius * 0.52, stops: [
+            (0, rustColour.withAlphaComponent(0.30)),
+            (0.30, rustColour.withAlphaComponent(0.13)),
+            (0.62, rustColour.withAlphaComponent(0.04)),
+            (1, rustColour.withAlphaComponent(0)),
+        ])
         for spot in grain.rust(radius: radius) {
-            let point = lidFlat(spot.x * radius, spot.y * radius)
-            drawWear(spot, at: point, unit: radius, colour: CompassTheme.rust,
-                     alpha: CompassTheme.wearGain, in: context)
+            drawWear(spot, at: lidFlat(spot.x * radius, spot.y * radius), unit: radius,
+                     colour: CompassTheme.rust, alpha: CompassTheme.wearGain, in: context)
         }
-
         context.restoreGState()
-
-        // Bead: only the far arc is outlined. A full outline crosses the case at the hinge and
-        // makes the lid look detached from the box.
-        let farArc = (0...64).map { lidPoint(.pi + CGFloat($0) / 64 * .pi, radius) }
-        stroke(farArc, context, NSColor.black.withAlphaComponent(0.62),
-               width: max(1.1, radius * 0.014))
-        let lit = (0...40).map { lidPoint(.pi * 1.18 + CGFloat($0) / 40 * .pi * 0.85, radius) }
-        stroke(lit, context,
-               NSColor.white.withAlphaComponent(0.10 + 0.24 * abs(sin(lid.angle))),
-               width: max(0.9, radius * 0.007))
     }
+}
+
+extension CompassRenderer {
 
     /// One soft blot of wear — tarnish or rust — as a radial gradient.
     private func drawWear(
@@ -1003,46 +1393,44 @@ extension CompassRenderer {
         context.restoreGState()
     }
 
-    /// The hinge barrel across the top of the case. It is what makes the open lid read as
-    /// attached rather than floating above the box.
+    /// The hinge barrel across the back of the case: five knuckles on one pin, alternately the
+    /// case's and the lid's. It is what makes the lid read as hung on the box rather than hovering
+    /// over it, and it is drawn after the lid because the lid is what turns about it.
     private func drawHinge(in context: CGContext, state: State, metrics: CompassMetrics) {
-        // On the lid's own pivot, not the case's rim. These used to be the same line, so the
-        // barrel could be drawn at `-caseRadius` and look right; now that the lid closes inside
-        // the lip and pivots on a short strap, drawing the barrel on the case's rim leaves it
-        // floating a visible gap below the lid it is supposed to carry.
-        let y = CompassLid(metrics: metrics).hingeY
-        let z = -metrics.cardDepth * 0.5
+        let lid = state.lid
+        let y = lid.hingeY
+        let z = lid.hingeZ
+        let radius = metrics.cardRadius * 0.040
+        let span = metrics.cardRadius * 0.34
+        let gap = metrics.cardRadius * 0.004
+        let edges = [-span, -span * 0.6, -span * 0.2, span * 0.2, span * 0.6, span]
 
-        let shaftFrom = state.camera.project(Point3D(x: -metrics.hingeHalfSpan * 1.11, y: y, z: z))
-        let shaftTo = state.camera.project(Point3D(x: metrics.hingeHalfSpan * 1.11, y: y, z: z))
-        context.saveGState()
-        context.setStrokeColor(CompassTheme.brassMid.cgColor)
-        context.setLineWidth(metrics.cardRadius * 0.026)
-        context.setLineCap(.round)
-        context.move(to: shaftFrom.point)
-        context.addLine(to: shaftTo.point)
-        context.strokePath()
-        context.restoreGState()
+        for knuckle in 0..<5 {
+            let x0 = edges[knuckle] + gap
+            let x1 = edges[knuckle + 1] - gap
+            let from = state.camera.project(Point3D(x: x0, y: y, z: z))
+            let to = state.camera.project(Point3D(x: x1, y: y, z: z))
+            let half = radius * (from.depthScale + to.depthScale) / 2
+            let ownedByLid = knuckle % 2 == 1
+            let centreY = (from.point.y + to.point.y) / 2
+            let rect = CGRect(x: from.point.x, y: centreY - half, width: to.point.x - from.point.x, height: half * 2)
 
-        for offset in [-metrics.hingeHalfSpan, 0, metrics.hingeHalfSpan] {
-            let centre = state.camera.project(Point3D(x: offset, y: y, z: z))
-            let radius = metrics.cardRadius * (offset == 0 ? 0.034 : 0.030)
-            let rect = CGRect(
-                x: centre.point.x - radius * 1.5 * centre.depthScale,
-                y: centre.point.y - radius * centre.depthScale,
-                width: radius * 3 * centre.depthScale,
-                height: radius * 2 * centre.depthScale
-            )
+            // CoreGraphics requires the corner radius to fit the rect, which a tilted, foreshortened
+            // knuckle can briefly violate.
+            let capsuleRadius = max(0, min(half, rect.width / 2, rect.height / 2))
+            // A capsule along the pin, shaded like a cylinder lit from above.
             context.saveGState()
-            context.addEllipse(in: rect)
+            context.addPath(CGPath(roundedRect: rect, cornerWidth: capsuleRadius, cornerHeight: capsuleRadius, transform: nil))
             if let gradient = CGGradient(
                 colorsSpace: CGColorSpaceCreateDeviceRGB(),
                 colors: [
-                    CompassTheme.brassHi.cgColor,
+                    (ownedByLid ? NSColor(calibratedRed: 0.886, green: 0.804, blue: 0.596, alpha: 1)
+                                : CompassTheme.brassHi).cgColor,
+                    CompassTheme.brassLit.cgColor,
                     CompassTheme.brassMid.cgColor,
                     CompassTheme.brassDeep.cgColor,
                 ] as CFArray,
-                locations: [0, 0.5, 1]
+                locations: [0, 0.35, 0.7, 1] as [CGFloat]
             ) {
                 context.clip()
                 context.drawLinearGradient(
@@ -1051,51 +1439,42 @@ extension CompassRenderer {
                     end: CGPoint(x: rect.midX, y: rect.maxY),
                     options: []
                 )
-                context.resetClip()
             }
             context.restoreGState()
             context.saveGState()
-            context.addEllipse(in: rect)
-            context.setStrokeColor(NSColor.black.withAlphaComponent(0.50).cgColor)
+            context.addPath(CGPath(roundedRect: rect, cornerWidth: capsuleRadius, cornerHeight: capsuleRadius, transform: nil))
+            context.setStrokeColor(NSColor(calibratedRed: 0.094, green: 0.063, blue: 0.031, alpha: 0.55).cgColor)
             context.setLineWidth(0.9)
             context.strokePath()
             context.restoreGState()
+
+            // Rust on the knuckle itself, where water sits and the lacquer gives up first. Small, and
+            // a stain on the metal rather than a wash over it: at larger sizes the blooms merged
+            // into one orange band across the case, which read as a painted stripe.
+            let mid = state.camera.project(Point3D(x: (x0 + x1) / 2, y: y, z: z))
+            context.saveGState()
+            context.translateBy(x: mid.point.x, y: mid.point.y)
+            context.scaleBy(x: 1.5, y: 0.7)
+            lidGlow(context, at: .zero, radius: metrics.cardRadius * 0.07 * mid.depthScale, stops: [
+                (0, CompassTheme.rustBloom.withAlphaComponent(0.34)),
+                (0.5, CompassTheme.rust.withAlphaComponent(0.14)),
+                (1, CompassTheme.rust.withAlphaComponent(0)),
+            ])
+            context.restoreGState()
         }
 
-        // Rust. This is the one place on the instrument where it belongs: the steel pin of a
-        // hundred-year-old hinge rusts into the brass around it, because that is where water
-        // sits and the lacquer gives up first. Drawn after the knuckle highlights so it stains
-        // them rather than being painted over by them.
-        //
-        // Small on purpose. At a reach of 0.215 card-radii the three blooms merged into a single
-        // orange band across the top of the case, which read as a painted stripe rather than as
-        // corrosion; rust wants to be a stain *on* the metal, not a wash *over* it.
-        let reach = metrics.cardRadius * 0.088
-        let bloom = CGGradient(
-            colorsSpace: CGColorSpaceCreateDeviceRGB(),
-            colors: [
-                CompassTheme.rustBloom.withAlphaComponent(0.50).cgColor,
-                CompassTheme.rust.withAlphaComponent(0.30).cgColor,
-                CompassTheme.rust.withAlphaComponent(0.10).cgColor,
-                CompassTheme.rust.withAlphaComponent(0).cgColor,
-            ] as CFArray,
-            locations: [0, 0.30, 0.62, 1]
-        )
-        for (offset, scale) in [(CGFloat(-1), CGFloat(1.0)), (CGFloat(0), CGFloat(1.16)),
-                                (CGFloat(1), CGFloat(0.82))] {
-            let centre = state.camera.project(
-                Point3D(x: metrics.hingeHalfSpan * offset, y: y, z: z)
-            )
-            guard let bloom else { continue }
+        // The pin's end caps.
+        for sign in [CGFloat(-1), CGFloat(1)] {
+            let end = state.camera.project(Point3D(x: sign * (span + gap), y: y, z: z))
+            let r = radius * end.depthScale * 0.62
             context.saveGState()
-            let r = reach * scale * centre.depthScale
-            // Squashed: it is a stain in the plane of the case top, not a ball.
-            context.translateBy(x: centre.point.x, y: centre.point.y)
-            context.scaleBy(x: 1, y: 0.72)
-            context.drawRadialGradient(
-                bloom, startCenter: .zero, startRadius: 0, endCenter: .zero, endRadius: r,
-                options: []
-            )
+            context.addEllipse(in: CGRect(x: end.point.x - r, y: end.point.y - r, width: r * 2, height: r * 2))
+            context.setFillColor(CompassTheme.brassDark.cgColor)
+            context.fillPath()
+            context.addEllipse(in: CGRect(x: end.point.x - r, y: end.point.y - r, width: r * 2, height: r * 2))
+            context.setStrokeColor(NSColor(calibratedRed: 0.094, green: 0.063, blue: 0.031, alpha: 0.6).cgColor)
+            context.setLineWidth(0.8)
+            context.strokePath()
             context.restoreGState()
         }
     }
