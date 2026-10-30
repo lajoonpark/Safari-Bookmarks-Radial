@@ -331,8 +331,7 @@ extension CompassRenderer {
             context.restoreGState()
         }
 
-        drawScratches(grain.creases, unit: unit, map: map,
-                      bright: CompassRenderer.creaseBright, dark: CompassRenderer.creaseDark, in: context)
+        drawCreases(grain.creases, unit: unit, map: map, in: context)
 
         // Rubbing at the edge, where the card has ridden against the brass: pale fibre bared by
         // the wear.
@@ -346,6 +345,73 @@ extension CompassRenderer {
             context.setFillColor(ink.withAlphaComponent(min(1, speck.alpha * damage)).cgColor)
             context.fillEllipse(in: CGRect(x: centre.x - radius, y: centre.y - radius, width: radius * 2, height: radius * 2))
         }
+    }
+
+    /// Folds in the card. Not a line with a shadow beside it: a fold is a soft ridge that wanders
+    /// a little, breaks where the paper has flattened, and fades out at either end. The polyline
+    /// is resampled and each short run is drawn at its own strength, so the fold comes and goes
+    /// along its length the way a real one does.
+    private func drawCreases(
+        _ list: [CompassGrain.Scratch],
+        unit: CGFloat,
+        map: (CGPoint) -> CGPoint,
+        in context: CGContext
+    ) {
+        let samples = 56
+        context.saveGState()
+        context.setLineCap(.round)
+        for (index, crease) in list.enumerated() {
+            let phaseA = CGFloat(index) * 2.7 + 0.6
+            let phaseB = CGFloat(index) * 1.3 + 2.1
+            let pts = crease.points
+            guard pts.count >= 2 else { continue }
+
+            // Resample along the polyline with a slow sideways wander.
+            var line: [CGPoint] = []
+            for step in 0...samples {
+                let t = CGFloat(step) / CGFloat(samples)
+                let f = t * CGFloat(pts.count - 1)
+                let i = min(pts.count - 2, Int(f))
+                let u = f - CGFloat(i)
+                let a = pts[i], b = pts[i + 1]
+                var x = a.x + (b.x - a.x) * u
+                var y = a.y + (b.y - a.y) * u
+                let dx = b.x - a.x, dy = b.y - a.y
+                let length = max(0.001, hypot(dx, dy))
+                let wander = 0.006 * (sin(t * 17 + phaseA) + 0.6 * sin(t * 41 + phaseB))
+                x += -dy / length * wander
+                y += dx / length * wander
+                line.append(map(CGPoint(x: x * unit, y: y * unit)))
+            }
+
+            for step in 0..<samples {
+                let t = (CGFloat(step) + 0.5) / CGFloat(samples)
+                let envelope = pow(sin(.pi * t), 0.7)
+                let breaks = min(1, max(0, 0.55 + 0.9 * sin(t * 23 + phaseA) * sin(t * 9 + phaseB)))
+                let strength = crease.alpha * damage * envelope * breaks
+                guard strength > 0.004 else { continue }
+                let from = line[step], to = line[step + 1]
+
+                context.move(to: from)
+                context.addLine(to: to)
+                context.setStrokeColor(CompassRenderer.creaseDark.withAlphaComponent(strength * 0.30).cgColor)
+                context.setLineWidth(max(1.6, unit * 0.011))
+                context.strokePath()
+
+                context.move(to: from)
+                context.addLine(to: to)
+                context.setStrokeColor(CompassRenderer.creaseDark.withAlphaComponent(strength * 0.55).cgColor)
+                context.setLineWidth(max(0.6, unit * 0.0026))
+                context.strokePath()
+
+                context.move(to: CGPoint(x: from.x + 1.1, y: from.y + 1.1))
+                context.addLine(to: CGPoint(x: to.x + 1.1, y: to.y + 1.1))
+                context.setStrokeColor(CompassRenderer.creaseBright.withAlphaComponent(strength * 0.70).cgColor)
+                context.setLineWidth(max(0.6, unit * 0.0026))
+                context.strokePath()
+            }
+        }
+        context.restoreGState()
     }
 
     // MARK: - The needle
