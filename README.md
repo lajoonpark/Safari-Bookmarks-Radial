@@ -34,7 +34,12 @@ The manager window is a leather desk with one section at a time, switched from a
 | **Dial** | The real compass, live: it tilts toward the cursor, aims at a wedge on hover, opens a link on click. The text beside it follows the needle, with Open, Edit and Remove for that slot. `1`–`9` open a slot and `←` `→` turn the page. |
 | **Library** | Every slot in dial order, grouped by page. Drag a row onto another to move it there; search to filter (reordering waits until you clear it). |
 | **Import** | Safari import and its Full Disk Access permission in one place. It shows a dry run first (what is new, what is already on your dial), then fills the slots on screen. |
-| **Settings** | Shortcut, which browser and tab links open in, dial size (with a live preview) and startup. |
+| **Settings** | Shortcut, which browser links open in and how (go to an open tab, or a new tab you stay on or switch to), dial size (with a live preview) and startup. |
+
+Each slot can override that default. In its Edit sheet (or right-click it in the Library), pick
+**Go to open tab**, **New tab, stay here** or **New tab, switch to it**. Go to open tab can match
+just the exact page or any page on the site, and falls back to a new tab when nothing is open.
+Slots with their own behaviour carry a small brass glyph in the Library.
 
 Adding a link is the floating **+** (⌘N), which opens into a small form and offers a link from
 your clipboard. The menu-bar item offers the same thing as a quick panel.

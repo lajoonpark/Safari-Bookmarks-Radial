@@ -187,33 +187,38 @@ struct SettingsView: View {
                 browserMenu
             }
 
-            BrassSegmented(
-                options: Preferences.OpenTarget.allCases,
-                title: { $0.displayName },
-                selection: Binding(
-                    get: { model.preferences.openIn },
-                    set: { model.setOpenTarget($0) }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("DEFAULT FOR EVERY LINK")
+                    .font(Palette.mono(10.5, .semibold))
+                    .tracking(1.6)
+                    .foregroundStyle(Palette.boneFaint)
+                    .padding(.leading, 2)
+                BrassSegmented(
+                    options: OpenBehavior.allCases,
+                    title: { $0.displayName },
+                    selection: Binding(
+                        get: { model.preferences.openBehavior },
+                        set: { model.setOpenBehavior($0) }
+                    )
                 )
-            )
+            }
 
             Text(openSummary)
                 .font(Palette.display(13.5, .regular))
                 .foregroundStyle(Palette.boneDim)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if model.preferences.openIn != .newTab && model.targetIsHonoured {
-                Text("Uses AppleScript, so macOS asks once for permission to control \(model.preferences.browser.name). Falls back to a new tab if denied.")
+            Text("Any bookmark can override this: open its Edit sheet, or right-click it in the Library.")
+                .font(Palette.display(13, .regular))
+                .foregroundStyle(Palette.boneFaint)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if model.behaviorIsHonoured {
+                Text("Uses AppleScript, so macOS asks once for permission to control \(model.preferences.browser.name). Falls back to a plain open if denied.")
                     .font(Palette.display(13, .regular))
                     .foregroundStyle(Palette.boneFaint)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
-            toggle(
-                "Keep the current tab focused",
-                detail: "Open links in the background.",
-                isOn: model.preferences.openInBackground,
-                action: model.setBackground
-            )
         }
     }
 
@@ -237,11 +242,12 @@ struct SettingsView: View {
     ///
     /// Built from the same `OpenPlan` the launcher uses, so the promise and the behaviour
     /// cannot drift. It is also where an unscriptable browser is admitted: the description
-    /// says "opens in a new tab in Firefox" rather than promising a target that browser
-    /// cannot be asked for.
+    /// says the browser decides, rather than promising a behaviour it cannot be asked for.
     private var openSummary: String {
-        OpenPlan.description(for: model.preferences.openIn, in: model.preferences.browser)
-            + (model.preferences.openInBackground ? ", in the background." : ".")
+        let behavior = model.preferences.openBehavior
+        let browser = model.preferences.browser
+        let what = OpenPlan.description(for: behavior, in: browser)
+        return OpenPlan.honours(browser) ? "\(what). \(behavior.summary)" : "\(what)."
     }
 
     // MARK: - Dial

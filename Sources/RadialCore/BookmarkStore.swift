@@ -114,6 +114,20 @@ public final class BookmarkStore {
         return true
     }
 
+    /// Sets how one link opens. `nil` returns it to the default from Settings.
+    ///
+    /// The whole-site flag only means something when the link goes to an open tab, which a link
+    /// on the default may also do, so it is dropped only for the two new-tab behaviours rather
+    /// than left behind to resurface if the behaviour changes back.
+    @discardableResult
+    public func setOpening(id: UUID, behavior: OpenBehavior?, matchWholeSite: Bool) -> Bool {
+        guard let index = bookmarks.firstIndex(where: { $0.id == id }) else { return false }
+        bookmarks[index].openBehavior = behavior
+        bookmarks[index].matchWholeSite = (behavior == nil || behavior == .reuseTab) && matchWholeSite ? true : nil
+        save()
+        return true
+    }
+
     @discardableResult
     public func remove(id: UUID) -> Bool {
         guard let index = bookmarks.firstIndex(where: { $0.id == id }) else { return false }

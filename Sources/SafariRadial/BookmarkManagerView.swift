@@ -71,8 +71,19 @@ struct BookmarkManagerView: View {
         .motion(Motion.springSoft, value: showsComposer)
         .motion(Motion.spring, value: model.syncMessage)
         .sheet(item: $editing) { bookmark in
-            EditBookmarkSheet(bookmark: bookmark, slot: model.slotNumber(for: bookmark)) { title, url in
-                model.update(id: bookmark.id, title: title, url: url)
+            EditBookmarkSheet(
+                bookmark: bookmark,
+                slot: model.slotNumber(for: bookmark),
+                defaultBehavior: model.defaultOpenBehavior,
+                browser: model.browser
+            ) { title, url, behavior, wholeSite in
+                model.update(
+                    id: bookmark.id,
+                    title: title,
+                    url: url,
+                    openBehavior: behavior,
+                    matchWholeSite: wholeSite
+                )
             }
         }
         .onAppear { tracker.start() }
@@ -129,27 +140,43 @@ struct BookmarkManagerView: View {
 
 // MARK: - Edit sheet
 
-/// Title plus link, with live validation. Small enough that a sheet is the right surface.
+/// Title, link and how it opens, with live validation. Small enough that a sheet is the right
+/// surface.
 struct EditBookmarkSheet: View {
     let bookmark: Bookmark
     /// Which slot this is, shown as the sheet's eyebrow.
     var slot: Int?
-    let onSave: (String, String) -> String?
+    /// What Settings does with links that do not choose for themselves, so "Default" can say it.
+    let defaultBehavior: OpenBehavior
+    let browser: Browser
+    let onSave: (String, String, OpenBehavior?, Bool) -> String?
 
     @Environment(\.dismiss) private var dismiss
     @State private var title: String
     @State private var url: String
+    @State private var behavior: OpenBehavior?
+    @State private var wholeSite: Bool
     @State private var error: String?
     @FocusState private var focus: Field?
 
     private enum Field { case name, link }
 
-    init(bookmark: Bookmark, slot: Int? = nil, onSave: @escaping (String, String) -> String?) {
+    init(
+        bookmark: Bookmark,
+        slot: Int? = nil,
+        defaultBehavior: OpenBehavior,
+        browser: Browser,
+        onSave: @escaping (String, String, OpenBehavior?, Bool) -> String?
+    ) {
         self.bookmark = bookmark
         self.slot = slot
+        self.defaultBehavior = defaultBehavior
+        self.browser = browser
         self.onSave = onSave
         _title = State(initialValue: bookmark.title)
         _url = State(initialValue: bookmark.url)
+        _behavior = State(initialValue: bookmark.openBehavior)
+        _wholeSite = State(initialValue: bookmark.matchesWholeSite)
     }
 
     private var isValid: Bool { Bookmark.normalizedURL(url) != nil }
@@ -191,6 +218,15 @@ struct EditBookmarkSheet: View {
                     .brassField(focused: focus == .link, error: showsInvalid || error != nil)
             }
 
+            field("WHEN OPENED") {
+                OpeningPicker(
+                    selection: $behavior,
+                    wholeSite: $wholeSite,
+                    defaultBehavior: defaultBehavior,
+                    browser: browser
+                )
+            }
+
             if showsInvalid {
                 Text("Needs to be an http or https address.")
                     .font(Palette.display(13.5, .medium))
@@ -210,7 +246,7 @@ struct EditBookmarkSheet: View {
                     .buttonStyle(QuietButtonStyle(size: 14))
                     .keyboardShortcut(.cancelAction)
                 Button("Save") {
-                    if let message = onSave(title, url) {
+                    if let message = onSave(title, url, behavior, wholeSite) {
                         error = message
                     } else {
                         dismiss()
@@ -236,6 +272,7 @@ struct EditBookmarkSheet: View {
         )
         .motion(Motion.spring, value: showsInvalid)
         .motion(Motion.spring, value: error)
+        .motion(Motion.spring, value: behavior)
         .onAppear { focus = .name }
     }
 
@@ -248,6 +285,94 @@ struct EditBookmarkSheet: View {
                 .padding(.leading, 2)
             content()
         }
+    }
+}
+
+// MARK: - Opening picker
+
+/// The four ways a bookmark can open, all on screen at once: "Default" plus the three behaviours.
+///
+/// A list rather than a dropdown, because the choice is only intuitive when each option can be
+/// read before it is picked, and four short rows cost less than the click that opens a menu.
+/// "Default" says what it currently is, so nobody has to remember the setting it follows.
+struct OpeningPicker: View {
+    @Binding var selection: OpenBehavior?
+    @Binding var wholeSite: Bool
+    let defaultBehavior: OpenBehavior
+    let browser: Browser
+
+    private var effective: OpenBehavior { selection ?? defaultBehavior }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(spacing: 4) {
+                row(nil, title: "Default", detail: defaultBehavior.displayName)
+                ForEach(OpenBehavior.allCases, id: \.self) { behavior in
+                    row(behavior, title: behavior.displayName, detail: nil)
+                }
+            }
+
+            Text(OpenPlan.honours(browser)
+                 ? effective.summary
+                 : "\(browser.name) can't be told what to do with its tabs, so it decides.")
+                .font(Palette.display(13.5, .regular))
+                .foregroundStyle(Palette.boneDim)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, 2)
+
+            if effective == .reuseTab, OpenPlan.honours(browser) {
+                Toggle(isOn: $wholeSite) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Any page on this site")
+                            .font(Palette.display(15, .regular))
+                            .foregroundStyle(Palette.bone)
+                        Text("Counts a tab on the same site as open, not just this exact page.")
+                            .font(Palette.display(13, .regular))
+                            .foregroundStyle(Palette.boneDim)
+                    }
+                }
+                .toggleStyle(BrassToggleStyle())
+                .padding(.top, 4)
+                .transition(.opacity)
+            }
+        }
+    }
+
+    private func row(_ option: OpenBehavior?, title: String, detail: String?) -> some View {
+        let selected = selection == option
+        return Button {
+            withAnimation(Motion.springSoft) { selection = option }
+        } label: {
+            HStack(spacing: 12) {
+                Circle()
+                    .strokeBorder(selected ? Palette.signal : Palette.rimStrong, lineWidth: 1.5)
+                    .background(Circle().fill(selected ? Palette.signal : Color.clear).padding(4))
+                    .frame(width: 16, height: 16)
+                Text(title)
+                    .font(Palette.display(15, selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? Palette.bone : Palette.boneDim)
+                if let detail {
+                    Text("· \(detail)")
+                        .font(Palette.display(13.5, .regular))
+                        .foregroundStyle(Palette.boneFaint)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(selected ? Palette.signal.opacity(0.10) : Palette.void)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(selected ? Palette.signal.opacity(0.6) : Palette.rim, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(detail.map { "\(title), \($0)" } ?? title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 

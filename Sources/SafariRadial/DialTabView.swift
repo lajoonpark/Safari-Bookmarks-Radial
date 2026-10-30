@@ -143,6 +143,9 @@ struct DialTabView: View {
                 .truncationMode(.middle)
                 .padding(.top, 14)
 
+            openingLine(bookmark)
+                .padding(.top, 10)
+
             HStack(spacing: 10) {
                 Button {
                     open(bookmark)
@@ -171,6 +174,22 @@ struct DialTabView: View {
             }
             .padding(.top, 28)
         }
+    }
+
+    /// How this slot opens, and whether that is its own choice or the default's.
+    private func openingLine(_ bookmark: Bookmark) -> some View {
+        let behavior = bookmark.effectiveOpenBehavior(default: model.defaultOpenBehavior)
+        let honoured = OpenPlan.honours(model.browser)
+        return HStack(spacing: 7) {
+            Image(systemName: behavior.symbol)
+                .font(.system(size: 12, weight: .semibold))
+            Text(honoured ? behavior.displayName : "Opened by \(model.browserName)")
+            if honoured, bookmark.openBehavior == nil {
+                Text("· default").foregroundStyle(Palette.boneFaint)
+            }
+        }
+        .font(Palette.display(14, .regular))
+        .foregroundStyle(bookmark.openBehavior == nil ? Palette.boneDim : Palette.signal)
     }
 
     private var eyebrow: String {

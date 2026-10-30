@@ -7,12 +7,26 @@ public struct Bookmark: Codable, Equatable, Identifiable, Hashable {
     public var url: String
     /// Human readable folder path from Safari, e.g. "Dev/Swift". Empty for top level.
     public var folder: String
+    /// How this link opens, overriding the default in Settings. `nil` follows the default.
+    public var openBehavior: OpenBehavior?
+    /// For `Go to open tab`: count any tab on this link's site as already open, instead of
+    /// only the same page. `nil` means the same page only.
+    public var matchWholeSite: Bool?
 
-    public init(id: UUID = UUID(), title: String, url: String, folder: String = "") {
+    public init(
+        id: UUID = UUID(),
+        title: String,
+        url: String,
+        folder: String = "",
+        openBehavior: OpenBehavior? = nil,
+        matchWholeSite: Bool? = nil
+    ) {
         self.id = id
         self.title = title
         self.url = url
         self.folder = folder
+        self.openBehavior = openBehavior
+        self.matchWholeSite = matchWholeSite
     }
 
     public var host: String {

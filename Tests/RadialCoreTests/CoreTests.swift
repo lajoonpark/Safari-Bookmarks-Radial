@@ -422,7 +422,7 @@ final class PreferencesTests: XCTestCase {
 
     func testRoundTrip() throws {
         var prefs = Preferences()
-        prefs.openIn = .currentTab
+        prefs.openBehavior = .reuseTab
         prefs.hotkey = HotkeySpec(keyCode: 49, command: true, option: true)
         let decoded = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(prefs))
         XCTAssertEqual(decoded, prefs)
@@ -838,34 +838,199 @@ final class BrowserTests: XCTestCase {
 
     /// The reported bug: "my setting says new tab, but GitHub opens the tab that already has
     /// GitHub in it". Launch Services reuses an existing tab, so a scriptable browser has to
-    /// be asked for a literal new tab instead.
-    func testNewTabIsScriptedRatherThanHandedToLaunchServices() {
-        XCTAssertEqual(OpenPlan.resolve(target: .newTab, in: .safari), .scripted(.newTab))
-        XCTAssertEqual(OpenPlan.resolve(target: .newTab, in: .chrome), .scripted(.newTab))
+    /// be asked for exactly what was chosen instead.
+    func testScriptableBrowsersAreDrivenRatherThanHandedToLaunchServices() {
+        for behavior in OpenBehavior.allCases {
+            XCTAssertEqual(
+                OpenPlan.resolve(behavior: behavior, in: .safari),
+                .scripted(behavior, matchWholeSite: false)
+            )
+            XCTAssertEqual(
+                OpenPlan.resolve(behavior: behavior, in: .chrome),
+                .scripted(behavior, matchWholeSite: false)
+            )
+        }
     }
 
-    func testUnscriptableBrowserFallsBackToPlainOpen() {
-        XCTAssertEqual(OpenPlan.resolve(target: .newTab, in: .firefox), .launchServices)
-        XCTAssertEqual(OpenPlan.resolve(target: .currentTab, in: .firefox), .launchServices)
-        XCTAssertEqual(OpenPlan.resolve(target: .newWindow, in: .arc), .launchServices)
+    func testUnscriptableBrowserFallsBackToPlainOpenAndKeepsBackgroundIntent() {
+        XCTAssertEqual(OpenPlan.resolve(behavior: .newTabForeground, in: .firefox), .launchServices(background: false))
+        XCTAssertEqual(OpenPlan.resolve(behavior: .reuseTab, in: .arc), .launchServices(background: false))
+        XCTAssertEqual(OpenPlan.resolve(behavior: .newTabBackground, in: .firefox), .launchServices(background: true))
     }
 
-    func testHonestyAboutTargetsPerBrowser() {
-        XCTAssertTrue(OpenPlan.honoursTarget(.currentTab, in: .safari))
-        XCTAssertTrue(OpenPlan.honoursTarget(.currentTab, in: .chrome))
-        // A plain open cannot promise a specific tab, but a new tab is always at least true.
-        XCTAssertFalse(OpenPlan.honoursTarget(.currentTab, in: .firefox))
-        XCTAssertTrue(OpenPlan.honoursTarget(.newTab, in: .firefox))
+    func testHonestyAboutWhichBrowsersCanBeDriven() {
+        XCTAssertTrue(OpenPlan.honours(.safari))
+        XCTAssertTrue(OpenPlan.honours(.chrome))
+        XCTAssertFalse(OpenPlan.honours(.firefox))
+        XCTAssertFalse(OpenPlan.honours(.arc))
     }
 
     func testDescriptionsNameTheBrowserAndAdmitFallbacks() {
-        XCTAssertEqual(
-            OpenPlan.description(for: .newWindow, in: .chrome),
-            "New window in Google Chrome"
-        )
-        let degraded = OpenPlan.description(for: .currentTab, in: .firefox)
-        XCTAssertTrue(degraded.contains("new tab"), degraded)
+        XCTAssertEqual(OpenPlan.description(for: .reuseTab, in: .chrome), "Go to open tab in Google Chrome")
+        let degraded = OpenPlan.description(for: .reuseTab, in: .firefox)
         XCTAssertTrue(degraded.contains("Firefox"), degraded)
+        XCTAssertFalse(degraded.contains("Go to open tab"), degraded)
+    }
+
+    // MARK: Per-bookmark override
+
+    func testBookmarkWithoutAnOverrideFollowsTheDefault() {
+        let plain = Bookmark(title: "A", url: "https://a.com")
+        XCTAssertEqual(plain.effectiveOpenBehavior(default: .newTabBackground), .newTabBackground)
+        XCTAssertEqual(
+            OpenPlan.resolve(plain, default: .reuseTab, in: .safari),
+            .scripted(.reuseTab, matchWholeSite: false)
+        )
+    }
+
+    func testBookmarkOverrideWinsOverTheDefault() {
+        let pinned = Bookmark(title: "A", url: "https://a.com", openBehavior: .reuseTab, matchWholeSite: true)
+        XCTAssertEqual(pinned.effectiveOpenBehavior(default: .newTabBackground), .reuseTab)
+        XCTAssertEqual(
+            OpenPlan.resolve(pinned, default: .newTabBackground, in: .chrome),
+            .scripted(.reuseTab, matchWholeSite: true)
+        )
+    }
+
+    func testOldBookmarksFileLoadsWithNoOverrides() throws {
+        let json = #"[{"id":"6B29FC40-CA47-1067-B31D-00DD010662DA","title":"A","url":"https://a.com","folder":""}]"#
+        let decoded = try JSONDecoder().decode([Bookmark].self, from: Data(json.utf8))
+        XCTAssertNil(decoded[0].openBehavior)
+        XCTAssertFalse(decoded[0].matchesWholeSite)
+    }
+
+    func testOverrideSurvivesARoundTripAndStaysOutOfTheFileWhenUnset() throws {
+        let set = Bookmark(title: "A", url: "https://a.com", openBehavior: .newTabBackground)
+        let decoded = try JSONDecoder().decode(Bookmark.self, from: JSONEncoder().encode(set))
+        XCTAssertEqual(decoded, set)
+        let plain = try JSONEncoder().encode(Bookmark(title: "B", url: "https://b.com"))
+        XCTAssertFalse(String(decoding: plain, as: UTF8.self).contains("openBehavior"))
+    }
+
+    func testStoreSetsAndClearsAnOverrideAndDropsWholeSiteForNewTabs() {
+        let store = BookmarkStore(bookmarks: [Bookmark(title: "A", url: "https://a.com")])
+        let id = store.bookmarks[0].id
+        XCTAssertTrue(store.setOpening(id: id, behavior: .reuseTab, matchWholeSite: true))
+        XCTAssertEqual(store.bookmarks[0].openBehavior, .reuseTab)
+        XCTAssertTrue(store.bookmarks[0].matchesWholeSite)
+        // Following a default that may itself be "Go to open tab" keeps the flag.
+        store.setOpening(id: id, behavior: nil, matchWholeSite: true)
+        XCTAssertNil(store.bookmarks[0].openBehavior)
+        XCTAssertTrue(store.bookmarks[0].matchesWholeSite)
+        // A new-tab behaviour has no use for it.
+        store.setOpening(id: id, behavior: .newTabForeground, matchWholeSite: true)
+        XCTAssertFalse(store.bookmarks[0].matchesWholeSite)
+        XCTAssertFalse(store.setOpening(id: UUID(), behavior: .reuseTab, matchWholeSite: false))
+    }
+
+    func testEditingAndReimportingKeepTheOverride() {
+        let store = BookmarkStore(bookmarks: [Bookmark(title: "A", url: "https://a.com", openBehavior: .reuseTab)])
+        let id = store.bookmarks[0].id
+        store.update(id: id, title: "Renamed", url: "https://a.com/x")
+        store.merge([Bookmark(title: "Renamed again", url: "https://a.com/x")], save: false)
+        XCTAssertEqual(store.bookmarks[0].openBehavior, .reuseTab)
+    }
+
+    // MARK: Settings migration
+
+    func testLegacySettingsCarryForwardWithoutChangingBehaviour() throws {
+        func decode(_ json: String) throws -> Preferences {
+            try JSONDecoder().decode(Preferences.self, from: Data(json.utf8))
+        }
+        XCTAssertEqual(try decode(#"{"openIn":"newTab","openInBackground":false}"#).openBehavior, .newTabForeground)
+        XCTAssertEqual(try decode(#"{"openIn":"newTab","openInBackground":true}"#).openBehavior, .newTabBackground)
+        XCTAssertEqual(try decode(#"{"openIn":"currentTab"}"#).openBehavior, .newTabForeground)
+        XCTAssertEqual(try decode(#"{"openIn":"newWindow","openInBackground":true}"#).openBehavior, .newTabForeground)
+        XCTAssertEqual(try decode(#"{"showNumbers":false}"#).openBehavior, Preferences.default.openBehavior)
+        XCTAssertEqual(try decode(#"{"openBehavior":"reuseTab","openIn":"newTab"}"#).openBehavior, .reuseTab)
+    }
+
+    func testNewSettingsDoNotWriteTheLegacyKeys() throws {
+        let text = String(decoding: try JSONEncoder().encode(Preferences()), as: UTF8.self)
+        XCTAssertTrue(text.contains("openBehavior"))
+        XCTAssertFalse(text.contains("openInBackground"))
+        XCTAssertFalse(text.contains("\"openIn\""))
+    }
+
+    // MARK: Finding an open tab
+
+    private func tabs(_ urls: String...) -> [TabMatcher.Tab] {
+        urls.enumerated().map { TabMatcher.Tab(windowID: 1, index: $0.offset + 1, url: $0.element) }
+    }
+
+    func testMatchIgnoresWWWSchemeFragmentAndTrailingSlash() {
+        let open = tabs("https://example.com/other", "http://www.GitHub.com/anthropics/#readme")
+        XCTAssertEqual(
+            TabMatcher.firstMatch(in: open, for: "https://github.com/anthropics", wholeSite: false)?.index,
+            2
+        )
+    }
+
+    func testDifferentPagesOrQueriesAreNotTheSamePage() {
+        let open = tabs("https://github.com/anthropics/claude", "https://github.com/search?q=a")
+        XCTAssertNil(TabMatcher.firstMatch(in: open, for: "https://github.com/anthropics", wholeSite: false))
+        XCTAssertNil(TabMatcher.firstMatch(in: open, for: "https://github.com/search?q=b", wholeSite: false))
+    }
+
+    func testWholeSiteMatchesAnyPageButPrefersTheExactOne() {
+        let open = tabs("https://github.com/one", "https://github.com/two", "https://other.com")
+        XCTAssertEqual(TabMatcher.firstMatch(in: open, for: "https://github.com/two", wholeSite: true)?.index, 2)
+        XCTAssertEqual(TabMatcher.firstMatch(in: open, for: "https://github.com/three", wholeSite: true)?.index, 1)
+        XCTAssertNil(TabMatcher.firstMatch(in: open, for: "https://github.com/three", wholeSite: false))
+        XCTAssertNil(TabMatcher.firstMatch(in: open, for: "https://nowhere.com", wholeSite: true))
+    }
+
+    func testFrontmostWindowWinsAmongEqualMatches() {
+        let open = [
+            TabMatcher.Tab(windowID: 9, index: 4, url: "https://a.com"),
+            TabMatcher.Tab(windowID: 3, index: 1, url: "https://a.com"),
+        ]
+        XCTAssertEqual(TabMatcher.firstMatch(in: open, for: "https://a.com", wholeSite: false)?.windowID, 9)
+    }
+
+    // MARK: Scripts
+
+    func testTabListRoundTripsThroughItsOwnReportFormat() {
+        let report = "12\t1\thttps://a.com/x?y=1\n12\t2\thttps://b.com\n7\t1\thttps://c.com\n\nnot a tab\n"
+        XCTAssertEqual(BrowserScripts.parseTabs(report), [
+            TabMatcher.Tab(windowID: 12, index: 1, url: "https://a.com/x?y=1"),
+            TabMatcher.Tab(windowID: 12, index: 2, url: "https://b.com"),
+            TabMatcher.Tab(windowID: 7, index: 1, url: "https://c.com"),
+        ])
+    }
+
+    func testScriptsUseTheRightDialectPerEngine() throws {
+        let tab = TabMatcher.Tab(windowID: 5, index: 3, url: "https://a.com")
+        XCTAssertTrue(try XCTUnwrap(BrowserScripts.select(tab, in: .safari)).contains("set current tab of w to tab 3 of w"))
+        XCTAssertTrue(try XCTUnwrap(BrowserScripts.select(tab, in: .chrome)).contains("set active tab index of w to 3"))
+        // Safari does not select a tab it makes; Chromium always does.
+        XCTAssertTrue(try XCTUnwrap(BrowserScripts.openNewTab(url: "https://a.com", foreground: true, in: .safari))
+            .contains("set current tab to (make new tab"))
+        XCTAssertFalse(try XCTUnwrap(BrowserScripts.openNewTab(url: "https://a.com", foreground: false, in: .safari))
+            .contains("set current tab"))
+        XCTAssertTrue(try XCTUnwrap(BrowserScripts.openNewTab(url: "https://a.com", foreground: false, in: .chrome))
+            .contains("previousTabIndex"))
+        XCTAssertFalse(try XCTUnwrap(BrowserScripts.openNewTab(url: "https://a.com", foreground: true, in: .chrome))
+            .contains("previousTabIndex"))
+    }
+
+    func testStayingPutNeverActivatesTheBrowser() throws {
+        let behind = try XCTUnwrap(BrowserScripts.openNewTab(url: "https://a.com", foreground: false, in: .safari))
+        XCTAssertFalse(behind.contains("activate"))
+        let front = try XCTUnwrap(BrowserScripts.openNewTab(url: "https://a.com", foreground: true, in: .safari))
+        XCTAssertTrue(front.contains("activate"))
+    }
+
+    func testURLsAreEscapedInsideScripts() throws {
+        let script = try XCTUnwrap(BrowserScripts.openNewTab(url: "https://a.com/\"x\"", foreground: true, in: .safari))
+        XCTAssertTrue(script.contains("https://a.com/\\\"x\\\""))
+    }
+
+    func testUnscriptableBrowsersGetNoScripts() {
+        let tab = TabMatcher.Tab(windowID: 1, index: 1, url: "https://a.com")
+        XCTAssertNil(BrowserScripts.listTabs(in: .firefox))
+        XCTAssertNil(BrowserScripts.select(tab, in: .arc))
+        XCTAssertNil(BrowserScripts.openNewTab(url: "https://a.com", foreground: true, in: .firefox))
     }
 }
 

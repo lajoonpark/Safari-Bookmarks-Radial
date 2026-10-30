@@ -170,9 +170,8 @@ final class RadialController {
         // Launch before dismissing: the click should feel like it took effect instantly.
         BrowserLauncher.open(
             url,
-            target: preferences.openIn,
-            browser: preferences.browser,
-            background: preferences.openInBackground
+            plan: OpenPlan.resolve(bookmark, default: preferences.openBehavior, in: preferences.browser),
+            browser: preferences.browser
         )
         if delay > 0 {
             // The close belongs to the presentation that took the key. If the menu is summoned again

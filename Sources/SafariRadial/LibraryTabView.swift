@@ -110,10 +110,12 @@ struct LibraryTabView: View {
                                 bookmark: bookmark,
                                 slot: slots[bookmark.id] ?? 0,
                                 browserName: model.browserName,
+                                defaultBehavior: model.defaultOpenBehavior,
                                 isSelected: model.selectedID == bookmark.id,
                                 onSelect: { model.selectedID = bookmark.id },
                                 onOpen: { model.openBookmark(bookmark) },
                                 onEdit: { onEdit(bookmark) },
+                                onSetBehavior: { model.setOpenBehavior($0, for: bookmark) },
                                 onMove: { delta in
                                     withAnimation(Motion.springSoft) { model.moveSlot(of: bookmark, by: delta) }
                                 },
@@ -235,10 +237,13 @@ private struct LibraryRow: View {
     let bookmark: Bookmark
     let slot: Int
     let browserName: String
+    /// What a link with no behaviour of its own does, so the context menu can say what "Default" is.
+    let defaultBehavior: OpenBehavior
     let isSelected: Bool
     let onSelect: () -> Void
     let onOpen: () -> Void
     let onEdit: () -> Void
+    let onSetBehavior: (OpenBehavior?) -> Void
     let onMove: (Int) -> Void
     let onFront: () -> Void
     let canReorder: Bool
@@ -269,10 +274,21 @@ private struct LibraryRow: View {
             monogram
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(bookmark.displayTitle)
-                    .font(Palette.display(19, .semibold))
-                    .foregroundStyle(Palette.bone)
-                    .lineLimit(1)
+                HStack(spacing: 8) {
+                    Text(bookmark.displayTitle)
+                        .font(Palette.display(19, .semibold))
+                        .foregroundStyle(Palette.bone)
+                        .lineLimit(1)
+                    // Only links that choose for themselves are marked: a glyph on every row
+                    // would say nothing, and the exceptions are what is worth spotting.
+                    if let behavior = bookmark.openBehavior {
+                        Image(systemName: behavior.symbol)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Palette.signal)
+                            .help(behavior.displayName)
+                            .accessibilityLabel(behavior.displayName)
+                    }
+                }
                 Text(bookmark.host.isEmpty ? bookmark.url : bookmark.host)
                     .font(Palette.mono(12.5))
                     .foregroundStyle(Palette.boneDim)
@@ -342,6 +358,13 @@ private struct LibraryRow: View {
         .contextMenu {
             Button("Open in \(browserName)", action: onOpen)
             Button("Edit…", action: onEdit)
+            Menu("When opened") {
+                openingItem(nil, title: "Default (\(defaultBehavior.displayName))")
+                Divider()
+                ForEach(OpenBehavior.allCases, id: \.self) { behavior in
+                    openingItem(behavior, title: behavior.displayName)
+                }
+            }
             Divider()
             Button("Move to slot 1", action: onFront)
             Divider()
@@ -349,6 +372,18 @@ private struct LibraryRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Slot \(slot), \(bookmark.displayTitle)")
+    }
+
+    private func openingItem(_ behavior: OpenBehavior?, title: String) -> some View {
+        Button {
+            onSetBehavior(behavior)
+        } label: {
+            if bookmark.openBehavior == behavior {
+                Label(title, systemImage: "checkmark")
+            } else {
+                Text(title)
+            }
+        }
     }
 
     private var rowBackground: some View {
@@ -436,6 +471,17 @@ private extension View {
                 }
         } else {
             self
+        }
+    }
+}
+
+extension OpenBehavior {
+    /// The glyph that marks a bookmark with its own behaviour.
+    var symbol: String {
+        switch self {
+        case .reuseTab: return "arrow.right.circle"
+        case .newTabBackground: return "square.on.square"
+        case .newTabForeground: return "plus.square.on.square"
         }
     }
 }

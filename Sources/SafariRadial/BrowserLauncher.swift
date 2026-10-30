@@ -3,41 +3,64 @@ import RadialCore
 
 /// Opens bookmarks in the browser the user chose.
 ///
-/// The interesting case is `New tab`. Handing a URL to `NSWorkspace` with a target
-/// application *looks* like opening a tab, but Safari and the Chromium family both treat it
-/// as "open this address", which re-focuses an existing tab when that link is already loaded
-/// — so the user's "New tab" setting quietly meant "new tab, unless I already had it open".
-/// The only way to force a literal new tab is to ask the browser, which is why a scriptable
-/// browser gets an AppleScript and an unscriptable one gets the plain open plus an honest
-/// note in Settings.
+/// The care here is in doing exactly what was asked. Handing a URL to `NSWorkspace` with a target
+/// application *looks* like opening a tab, but Safari and the Chromium family both treat it as
+/// "open this address", which re-focuses an existing tab when that link is already loaded — so a
+/// "New tab" setting quietly meant "new tab, unless I already had it open". The only way to get
+/// exactly the behaviour asked for is to ask the browser, which is why a scriptable browser gets
+/// AppleScript and an unscriptable one gets the plain open plus an honest note in Settings.
 enum BrowserLauncher {
 
-    static func open(
+    static func open(_ url: URL, plan: OpenPlan, browser: Browser) {
+        switch plan {
+        case .launchServices(let background):
+            openViaLaunchServices(url, browser: browser, background: background)
+        case .scripted(let behavior, let wholeSite):
+            if !runScripted(url, behavior: behavior, wholeSite: wholeSite, browser: browser) {
+                // Consent denied, or the browser is busy. A plain open still gets the page in
+                // front of the user; it may just land in a tab that already had it.
+                openViaLaunchServices(url, browser: browser, background: !behavior.switchesToLink)
+            }
+        }
+    }
+
+    /// Returns whether the browser did as asked, so the caller knows when to fall back.
+    private static func runScripted(
         _ url: URL,
-        target: Preferences.OpenTarget,
-        browser: Browser,
-        background: Bool
-    ) {
-        let plan = OpenPlan.resolve(target: target, in: browser)
-        guard case .scripted(let action) = plan,
-              let applicationName = browser.scriptName,
-              browser.engine != .launchServices
-        else {
-            openViaLaunchServices(url, browser: browser, background: background)
-            return
+        behavior: OpenBehavior,
+        wholeSite: Bool,
+        browser: Browser
+    ) -> Bool {
+        if behavior == .reuseTab, isRunning(browser),
+           let tab = openTab(for: url, wholeSite: wholeSite, in: browser),
+           let select = BrowserScripts.select(tab, in: browser) {
+            return runAppleScript(select).succeeded
         }
-        let source = script(
-            for: action,
-            url: url,
-            browser: browser,
-            application: applicationName,
-            background: background
+        // A new tab, in the background only if that is what was asked for: finding nothing to
+        // reuse means the link still has to appear in front of the user.
+        guard let script = BrowserScripts.openNewTab(
+            url: url.absoluteString,
+            foreground: behavior.switchesToLink,
+            in: browser
+        ) else { return false }
+        return runAppleScript(script).succeeded
+    }
+
+    /// A tab that already has the link, or nil when none does (or the browser would not say).
+    private static func openTab(for url: URL, wholeSite: Bool, in browser: Browser) -> TabMatcher.Tab? {
+        guard let list = BrowserScripts.listTabs(in: browser),
+              let output = runAppleScript(list).output
+        else { return nil }
+        return TabMatcher.firstMatch(
+            in: BrowserScripts.parseTabs(output),
+            for: url.absoluteString,
+            wholeSite: wholeSite
         )
-        if !runAppleScript(source) {
-            // Consent denied, or the browser is busy. A plain open still gets the page in
-            // front of the user; it may just land in a tab that already had it.
-            openViaLaunchServices(url, browser: browser, background: background)
-        }
+    }
+
+    /// Looking at a browser that is not running would launch it just to find nothing.
+    private static func isRunning(_ browser: Browser) -> Bool {
+        !NSRunningApplication.runningApplications(withBundleIdentifier: browser.bundleID).isEmpty
     }
 
     /// `withApplicationAt:` targets one specific browser and needs no scripting at all.
@@ -69,75 +92,19 @@ enum BrowserLauncher {
         BrowserCatalog.available(selected: selected) { isInstalled(Browser.browser(forBundleID: $0)) }
     }
 
-    // MARK: - Scripts
-
-    /// Safari and the Chromium family need different verbs for the same intent, so the
-    /// script is built from the browser's engine rather than assuming one dialect.
-    private static func script(
-        for action: OpenPlan.ScriptedAction,
-        url: URL,
-        browser: Browser,
-        application: String,
-        background: Bool
-    ) -> String {
-        let target = escape(url.absoluteString)
-        let activate = background ? "" : "activate"
-        let newTab: String
-        switch action {
-        case .currentTab:
-            newTab = "set URL of current tab of front window to \"\(target)\""
-        case .newWindow:
-            newTab = "make new document with properties {URL:\"\(target)\"}"
-        case .newTab:
-            switch browser.engine {
-            case .chromium: newTab = chromiumNewTabBody(target, background: background)
-            case .safari, .launchServices: newTab = safariNewTabBody(target)
-            }
-        }
-        return """
-        tell application "\(application)"
-            if (count of windows) is 0 then
-                make new document with properties {URL:"\(target)"}
-            else
-                \(newTab)
-            end if
-            \(activate)
-        end tell
-        """
+    private struct ScriptResult {
+        let output: String?
+        let succeeded: Bool
     }
 
-    /// Safari's `make new tab` inserts at the end without stealing focus, so background
-    /// opening needs no bookkeeping here.
-    private static func safariNewTabBody(_ target: String) -> String {
-        "tell front window to make new tab at end of tabs with properties {URL:\"\(target)\"}"
-    }
-
-    /// Chromium's `make new tab` *does* select the new tab, so keeping the previous tab
-    /// focused means recording its index and putting it back.
-    private static func chromiumNewTabBody(_ target: String, background: Bool) -> String {
-        let restore = background ? "\n            set active tab index of front window to previousTabIndex" : ""
-        return """
-        tell front window
-                set previousTabIndex to active tab index
-                make new tab at end of tabs with properties {URL:"\(target)"}\(restore)
-            end tell
-        """
-    }
-
-    private static func escape(_ string: String) -> String {
-        string.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-    }
-
-    @discardableResult
-    static func runAppleScript(_ source: String) -> Bool {
+    private static func runAppleScript(_ source: String) -> ScriptResult {
         var error: NSDictionary?
-        guard let script = NSAppleScript(source: source) else { return false }
-        script.executeAndReturnError(&error)
+        guard let script = NSAppleScript(source: source) else { return ScriptResult(output: nil, succeeded: false) }
+        let result = script.executeAndReturnError(&error)
         if let error {
             NSLog("SafariRadial: AppleScript failed: \(error)")
-            return false
+            return ScriptResult(output: nil, succeeded: false)
         }
-        return true
+        return ScriptResult(output: result.stringValue, succeeded: true)
     }
 }

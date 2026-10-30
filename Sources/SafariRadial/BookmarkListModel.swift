@@ -74,10 +74,17 @@ final class BookmarkListModel: ObservableObject {
         return nil
     }
 
-    func update(id: UUID, title: String, url: String) -> String? {
+    func update(
+        id: UUID,
+        title: String,
+        url: String,
+        openBehavior: OpenBehavior?,
+        matchWholeSite: Bool
+    ) -> String? {
         guard store.update(id: id, title: title, url: url) else {
             return "Could not save — check the address, or it may already exist."
         }
+        _ = store.setOpening(id: id, behavior: openBehavior, matchWholeSite: matchWholeSite)
         reload()
         syncMessage = .success("Saved")
         return nil
@@ -151,12 +158,24 @@ final class BookmarkListModel: ObservableObject {
         guard let url = Bookmark.normalizedURL(bookmark.url) else { return }
         BrowserLauncher.open(
             url,
-            target: .newTab,
-            browser: environment.preferences.browser,
-            background: false
+            plan: OpenPlan.resolve(bookmark, default: defaultOpenBehavior, in: browser),
+            browser: browser
         )
     }
 
+    /// Changes how one link opens from a menu, without the edit sheet. `nil` means the default.
+    func setOpenBehavior(_ behavior: OpenBehavior?, for bookmark: Bookmark) {
+        _ = store.setOpening(id: bookmark.id, behavior: behavior, matchWholeSite: bookmark.matchesWholeSite)
+        reload()
+        let name = behavior?.displayName ?? "Default (\(defaultOpenBehavior.displayName))"
+        syncMessage = .success("\(bookmark.displayTitle): \(name)")
+    }
+
+    /// What Settings says links do unless a bookmark overrides it.
+    var defaultOpenBehavior: OpenBehavior { environment.preferences.openBehavior }
+
+    var browser: Browser { environment.preferences.browser }
+
     /// Name of the browser links open in, so row actions and help text can name it.
-    var browserName: String { environment.preferences.browser.name }
+    var browserName: String { browser.name }
 }

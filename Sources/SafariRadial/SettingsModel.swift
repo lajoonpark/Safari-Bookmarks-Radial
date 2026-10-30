@@ -84,8 +84,8 @@ final class SettingsModel: ObservableObject {
         mutate { $0.hotkey = spec }
     }
 
-    func setOpenTarget(_ target: Preferences.OpenTarget) {
-        mutate { $0.openIn = target }
+    func setOpenBehavior(_ behavior: OpenBehavior) {
+        mutate { $0.openBehavior = behavior }
     }
 
     /// Browsers actually installed on this Mac, plus the current choice.
@@ -97,16 +97,12 @@ final class SettingsModel: ObservableObject {
         mutate { $0.browserBundleID = browser.bundleID }
     }
 
-    /// Whether the chosen target can be honoured exactly by the chosen browser.
+    /// Whether the chosen browser can be told what to do with its tabs.
     ///
-    /// Firefox and friends have no tab scripting, so "Current tab" cannot be asked for:
+    /// Firefox and Arc have no tab scripting, so none of the behaviours can be asked for:
     /// saying so here is better than letting the setting quietly do nothing.
-    var targetIsHonoured: Bool {
-        OpenPlan.honoursTarget(preferences.openIn, in: preferences.browser)
-    }
-
-    func setBackground(_ value: Bool) {
-        mutate { $0.openInBackground = value }
+    var behaviorIsHonoured: Bool {
+        OpenPlan.honours(preferences.browser)
     }
 
     func setAutoSync(_ value: Bool) {

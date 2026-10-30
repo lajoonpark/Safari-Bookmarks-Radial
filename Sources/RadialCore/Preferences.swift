@@ -3,13 +3,11 @@ import Foundation
 /// User-tunable behaviour, persisted as JSON in Application Support.
 public struct Preferences: Codable, Equatable {
     public var hotkey: HotkeySpec
-    /// How the chosen page opens the link.
-    public var openIn: OpenTarget
+    /// How links open unless a bookmark says otherwise.
+    public var openBehavior: OpenBehavior
     /// Bundle identifier of the browser links open in. Safari by default, so an upgrade
     /// does not silently change where people's links land.
     public var browserBundleID: String
-    /// Open the site in the background, keeping the current tab focused.
-    public var openInBackground: Bool
     /// Re-read Safari's bookmarks on every launch.
     public var autoSyncOnLaunch: Bool
     /// Reveal the number badge on each slice.
@@ -26,25 +24,10 @@ public struct Preferences: Codable, Equatable {
     /// Set once the ⌘R → ⌘E default change has been applied, so an explicit ⌘R is respected.
     public var hotkeyMigrated: Bool
 
-    public enum OpenTarget: String, Codable, CaseIterable {
-        case newTab
-        case currentTab
-        case newWindow
-
-        public var displayName: String {
-            switch self {
-            case .newTab: return "New tab"
-            case .currentTab: return "Current tab"
-            case .newWindow: return "New window"
-            }
-        }
-    }
-
     public init(
         hotkey: HotkeySpec = .default,
-        openIn: OpenTarget = .newTab,
+        openBehavior: OpenBehavior = .newTabForeground,
         browserBundleID: String = Browser.safari.bundleID,
-        openInBackground: Bool = false,
         autoSyncOnLaunch: Bool = true,
         showNumbers: Bool = true,
         compassWorn: Bool = false,
@@ -54,9 +37,8 @@ public struct Preferences: Codable, Equatable {
         hotkeyMigrated: Bool = false
     ) {
         self.hotkey = hotkey
-        self.openIn = openIn
+        self.openBehavior = openBehavior
         self.browserBundleID = browserBundleID
-        self.openInBackground = openInBackground
         self.autoSyncOnLaunch = autoSyncOnLaunch
         self.showNumbers = showNumbers
         self.compassWorn = compassWorn
@@ -72,10 +54,17 @@ public struct Preferences: Codable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let fallback = Preferences.default
         hotkey = try container.decodeIfPresent(HotkeySpec.self, forKey: .hotkey) ?? fallback.hotkey
-        openIn = try container.decodeIfPresent(OpenTarget.self, forKey: .openIn) ?? fallback.openIn
+        if let behavior = try container.decodeIfPresent(OpenBehavior.self, forKey: .openBehavior) {
+            openBehavior = behavior
+        } else {
+            let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+            openBehavior = OpenBehavior.migrating(
+                legacyTarget: try legacy.decodeIfPresent(String.self, forKey: .openIn),
+                background: try legacy.decodeIfPresent(Bool.self, forKey: .openInBackground) ?? false
+            )
+        }
         browserBundleID = try container.decodeIfPresent(String.self, forKey: .browserBundleID)
             ?? fallback.browserBundleID
-        openInBackground = try container.decodeIfPresent(Bool.self, forKey: .openInBackground) ?? fallback.openInBackground
         autoSyncOnLaunch = try container.decodeIfPresent(Bool.self, forKey: .autoSyncOnLaunch) ?? fallback.autoSyncOnLaunch
         showNumbers = try container.decodeIfPresent(Bool.self, forKey: .showNumbers) ?? fallback.showNumbers
         compassWorn = try container.decodeIfPresent(Bool.self, forKey: .compassWorn) ?? fallback.compassWorn
@@ -86,6 +75,12 @@ public struct Preferences: Codable, Equatable {
         hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding)
             ?? container.contains(.hotkey) // a file that already has settings predates onboarding
         hotkeyMigrated = try container.decodeIfPresent(Bool.self, forKey: .hotkeyMigrated) ?? false
+    }
+
+    /// The keys of the two settings `openBehavior` replaced, read only to carry them forward.
+    private enum LegacyKeys: String, CodingKey {
+        case openIn
+        case openInBackground
     }
 
     /// The browser links open in.
