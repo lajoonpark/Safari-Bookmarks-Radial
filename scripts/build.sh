@@ -26,7 +26,7 @@ DISPLAY_NAME="Safari Radial"
 BUNDLE_ID="com.local.safariradial"
 VERSION="1.0.0"
 BUILD_NUMBER="1"
-MIN_MACOS="13.0"
+MIN_MACOS="14.0"
 
 CONFIG="release"
 INSTALL=0

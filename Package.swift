@@ -16,7 +16,7 @@ targets.append(.executableTarget(name: "SafariRadial", dependencies: ["RadialCor
 
 let package = Package(
     name: "SafariRadial",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v14)],
     products: products,
     targets: targets
 )

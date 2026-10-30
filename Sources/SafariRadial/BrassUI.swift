@@ -1,0 +1,463 @@
+import SwiftUI
+import AppKit
+
+// The manager window's design system: everything that makes a control feel like a brass part
+// on a leather desk instead of a stock macOS widget. The tokens it draws on (colours, type) live
+// in `Palette` and `CompassTheme`; this file is motion, light and the controls themselves.
+//
+// Mirrors preview/manager-preview.html, which is where the look was approved.
+
+// MARK: - Motion
+
+/// The springs the window moves with. One vocabulary, so a tab change, a toggle and a button
+/// press feel like parts of the same machine.
+enum Motion {
+    /// Controls arriving at a new state: quick, a little overshoot.
+    static let spring = Animation.spring(response: 0.38, dampingFraction: 0.72)
+    /// Big surfaces: tab plates, the composer, anything that travels.
+    static let springSoft = Animation.spring(response: 0.55, dampingFraction: 0.80)
+    /// Presses and hovers.
+    static let snap = Animation.spring(response: 0.26, dampingFraction: 0.66)
+}
+
+private struct MotionModifier<Value: Equatable>: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let animation: Animation
+    let value: Value
+
+    func body(content: Content) -> some View {
+        content.animation(reduceMotion ? nil : animation, value: value)
+    }
+}
+
+extension View {
+    /// `.animation(_:value:)` that stands down when Reduce Motion is on.
+    func motion<Value: Equatable>(_ animation: Animation = Motion.spring, value: Value) -> some View {
+        modifier(MotionModifier(animation: animation, value: value))
+    }
+
+    /// A pointer-following highlight, clipped to `shape`. Reads as light moving over metal.
+    func brassSheen<S: Shape>(in shape: S) -> some View {
+        modifier(SheenModifier(shape: shape))
+    }
+
+    /// Rises a couple of points under the pointer.
+    func liftOnHover(_ lift: CGFloat = 2) -> some View {
+        modifier(LiftModifier(lift: lift))
+    }
+}
+
+private struct SheenModifier<S: Shape>: ViewModifier {
+    let shape: S
+    @State private var point: CGPoint?
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                GeometryReader { proxy in
+                    RadialGradient(
+                        colors: [Color.white.opacity(0.32), Color.clear],
+                        center: UnitPoint(
+                            x: (point?.x ?? 0) / max(proxy.size.width, 1),
+                            y: (point?.y ?? 0) / max(proxy.size.height, 1)
+                        ),
+                        startRadius: 0,
+                        endRadius: 130
+                    )
+                    .blendMode(.softLight)
+                    .opacity(point == nil ? 0 : 1)
+                    .animation(.easeOut(duration: 0.22), value: point == nil)
+                }
+                .clipShape(shape)
+                .allowsHitTesting(false)
+            }
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let location): point = location
+                case .ended: point = nil
+                }
+            }
+    }
+}
+
+private struct LiftModifier: ViewModifier {
+    let lift: CGFloat
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .offset(y: hovering ? -lift : 0)
+            .onHover { hovering = $0 }
+            .motion(Motion.spring, value: hovering)
+    }
+}
+
+// MARK: - Brass
+
+enum Brass {
+    /// A polished plate, lit from above. Dark ink stays readable on every stop.
+    static let plate = LinearGradient(
+        colors: [
+            CompassTheme.brassHi.swiftUI(),
+            CompassTheme.brassLit.swiftUI(),
+            Color(red: 0.62, green: 0.49, blue: 0.27),
+        ],
+        startPoint: .top,
+        endPoint: .bottom
+    )
+
+    /// The bright upper edge every plate catches.
+    static let edge = Color(red: 1.0, green: 0.96, blue: 0.84).opacity(0.55)
+}
+
+// MARK: - Pointer light
+
+/// Where the cursor is inside the window, as 0…1 with y down.
+///
+/// Observed only by the views that use it (the leather, the 3D compass), so mouse movement
+/// re-renders those and never the window around them. A local event monitor rather than
+/// `onContinuousHover` because the light has to keep following the cursor underneath other
+/// views, which SwiftUI hover would not deliver.
+final class PointerTracker: ObservableObject {
+    @Published private(set) var unit = CGPoint(x: 0.5, y: 0.3)
+    private var monitor: Any?
+
+    func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
+            self?.handle(event)
+            return event
+        }
+    }
+
+    func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+
+    private func handle(_ event: NSEvent) {
+        guard let bounds = event.window?.contentView?.bounds, bounds.width > 1, bounds.height > 1 else { return }
+        let point = event.locationInWindow
+        unit = CGPoint(
+            x: min(max(point.x / bounds.width, 0), 1),
+            y: min(max(1 - point.y / bounds.height, 0), 1)
+        )
+    }
+
+    deinit { stop() }
+}
+
+/// The desk: warm leather, a pool of light under the cursor, a vignette, and fine grain.
+struct LeatherBackground: View {
+    @ObservedObject var tracker: PointerTracker
+
+    var body: some View {
+        GeometryReader { proxy in
+            let longest = max(proxy.size.width, proxy.size.height)
+            ZStack {
+                Palette.void
+                RadialGradient(
+                    colors: [Palette.signal.opacity(0.13), Color.clear],
+                    center: UnitPoint(x: tracker.unit.x, y: tracker.unit.y),
+                    startRadius: 0,
+                    endRadius: longest * 0.42
+                )
+                RadialGradient(
+                    colors: [CompassTheme.brassLit.swiftUI(alpha: 0.07), Color.clear],
+                    center: .top,
+                    startRadius: 0,
+                    endRadius: longest * 0.8
+                )
+                RadialGradient(
+                    colors: [Color.clear, Color.black.opacity(0.45)],
+                    center: .center,
+                    startRadius: min(proxy.size.width, proxy.size.height) * 0.45,
+                    endRadius: longest * 0.75
+                )
+                GrainOverlay()
+            }
+            .animation(.easeOut(duration: 0.35), value: tracker.unit)
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+}
+
+/// Leather grain. Seeded, so it never shimmers between redraws.
+private struct GrainOverlay: View {
+    var body: some View {
+        Canvas { context, size in
+            var seed: UInt64 = 0x9E37_79B9_7F4A_7C15
+            func next() -> Double {
+                seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+                return Double(seed >> 33) / 2_147_483_648.0
+            }
+            for _ in 0..<2600 {
+                let x = next() * size.width
+                let y = next() * size.height
+                let light = next() > 0.5
+                let alpha = 0.05 + next() * 0.05
+                context.fill(
+                    Path(CGRect(x: x, y: y, width: 1, height: 1)),
+                    with: .color((light ? Color.white : Color.black).opacity(alpha))
+                )
+            }
+        }
+        .blendMode(.overlay)
+        .allowsHitTesting(false)
+    }
+}
+
+// MARK: - Controls
+
+/// A square icon button that warms up under the pointer.
+struct IconButton: View {
+    let systemName: String
+    let help: String
+    var tint: Color = Palette.boneDim
+    var hoverTint: Color = Palette.bone
+    var size: CGFloat = 36
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(hovering ? hoverTint : tint)
+                .frame(width: size, height: size)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Palette.bone.opacity(hovering ? 0.10 : 0))
+                )
+                .scaleEffect(hovering ? 1.12 : 1)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .motion(Motion.snap, value: hovering)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
+/// A keycap with real thickness: it sinks when `pressed`.
+struct PhysicalKey: View {
+    let text: String
+    var pressed = false
+
+    var body: some View {
+        Text(text)
+            .font(Palette.mono(15, .semibold))
+            .foregroundStyle(pressed ? Palette.signal : Palette.bone)
+            .frame(minWidth: 38, minHeight: 38)
+            .padding(.horizontal, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(LinearGradient(
+                        colors: [Palette.hullLift, Palette.hull],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(Palette.rim, lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.65), radius: 0, x: 0, y: pressed ? 0 : 4)
+            .offset(y: pressed ? 4 : 0)
+            .motion(Motion.snap, value: pressed)
+    }
+}
+
+/// A switch with a brass thumb. Replaces the system switch, which reads as a different product.
+struct BrassToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(alignment: .center, spacing: 16) {
+            configuration.label
+            Spacer(minLength: 12)
+            BrassSwitch(isOn: configuration.isOn) {
+                configuration.isOn.toggle()
+            }
+        }
+    }
+}
+
+private struct BrassSwitch: View {
+    let isOn: Bool
+    let toggle: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: toggle) {
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(isOn ? Palette.signal.opacity(0.35) : Palette.void)
+                    .overlay(
+                        Capsule().strokeBorder(isOn ? Palette.signal.opacity(0.7) : Palette.rim, lineWidth: 1)
+                    )
+                    .shadow(color: Palette.signal.opacity(isOn ? 0.28 : 0), radius: 10)
+                Circle()
+                    .fill(RadialGradient(
+                        colors: isOn
+                            ? [Color(red: 0.95, green: 0.84, blue: 0.66), Palette.signal]
+                            : [CompassTheme.brassHi.swiftUI(), CompassTheme.brassMid.swiftUI()],
+                        center: UnitPoint(x: 0.35, y: 0.3),
+                        startRadius: 0,
+                        endRadius: 18
+                    ))
+                    .overlay(Circle().strokeBorder(Brass.edge.opacity(0.4), lineWidth: 0.5))
+                    .shadow(color: Color.black.opacity(0.5), radius: 3, y: 2)
+                    .frame(width: 24, height: 24)
+                    .scaleEffect(hovering ? 1.08 : 1)
+                    .padding(3)
+                    .offset(x: isOn ? 22 : 0)
+            }
+            .frame(width: 52, height: 30)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .motion(Motion.spring, value: isOn)
+        .motion(Motion.snap, value: hovering)
+        .accessibilityAddTraits(.isToggle)
+        .accessibilityValue(isOn ? "On" : "Off")
+    }
+}
+
+/// A segmented control whose brass plate slides between choices.
+struct BrassSegmented<Option: Hashable>: View {
+    let options: [Option]
+    let title: (Option) -> String
+    @Binding var selection: Option
+    @Namespace private var plate
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(options, id: \.self) { option in
+                let selected = option == selection
+                Button {
+                    withAnimation(Motion.springSoft) { selection = option }
+                } label: {
+                    Text(title(option))
+                        .font(Palette.display(14.5, selected ? .semibold : .regular))
+                        .foregroundStyle(selected ? Palette.signalInk : Palette.boneDim)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background {
+                            if selected {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Brass.plate)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .strokeBorder(Brass.edge, lineWidth: 0.5)
+                                    )
+                                    .shadow(color: Color.black.opacity(0.4), radius: 4, y: 2)
+                                    .matchedGeometryEffect(id: "plate", in: plate)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Palette.void))
+        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Palette.rim, lineWidth: 1))
+    }
+}
+
+/// A slider with a brass thumb. The system slider cannot be reskinned on macOS.
+struct BrassSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    @State private var dragging = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let span = range.upperBound - range.lowerBound
+            let fraction = span > 0 ? (value - range.lowerBound) / span : 0
+            let x = CGFloat(fraction) * max(width - 22, 1) + 11
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Palette.void)
+                    .frame(height: 6)
+                    .overlay(Capsule().strokeBorder(Palette.rim, lineWidth: 1))
+                Capsule()
+                    .fill(Palette.signal)
+                    .frame(width: x, height: 6)
+                Circle()
+                    .fill(RadialGradient(
+                        colors: [CompassTheme.brassHi.swiftUI(), CompassTheme.brassLit.swiftUI(), CompassTheme.brassMid.swiftUI()],
+                        center: UnitPoint(x: 0.35, y: 0.3),
+                        startRadius: 0,
+                        endRadius: 16
+                    ))
+                    .overlay(Circle().strokeBorder(Brass.edge.opacity(0.5), lineWidth: 0.5))
+                    .shadow(color: Color.black.opacity(0.55), radius: 4, y: 3)
+                    .frame(width: 22, height: 22)
+                    .scaleEffect(dragging ? 0.92 : 1)
+                    .position(x: x, y: proxy.size.height / 2)
+            }
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { drag in
+                        dragging = true
+                        let t = min(max((drag.location.x - 11) / max(width - 22, 1), 0), 1)
+                        value = range.lowerBound + Double(t) * span
+                    }
+                    .onEnded { _ in dragging = false }
+            )
+            .motion(Motion.snap, value: dragging)
+        }
+        .frame(height: 24)
+    }
+}
+
+/// A status message that rises from the bottom edge and leaves on its own.
+struct ToastView: View {
+    let message: BookmarkListModel.SyncMessage
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: message.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                .foregroundStyle(message.isError ? Palette.alarm : Palette.mint)
+            Text(message.text)
+                .font(Palette.display(15, .medium))
+                .foregroundStyle(Palette.bone)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Palette.voidRaised))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Palette.rimStrong, lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.5), radius: 24, y: 12)
+    }
+}
+
+/// How tabs arrive and leave: a short slide with a slight tilt in depth, as if the page were
+/// swung onto the desk. `amount` runs -1…1; 0 is at rest.
+struct DepthTransition: ViewModifier {
+    let amount: Double
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(1 - abs(amount))
+            .rotation3DEffect(.degrees(amount * 7), axis: (x: 1, y: 0, z: 0), perspective: 0.6)
+            .offset(y: CGFloat(amount) * 26)
+            .scaleEffect(1 - abs(amount) * 0.015)
+    }
+}
+
+extension AnyTransition {
+    static var depth: AnyTransition {
+        .asymmetric(
+            insertion: .modifier(active: DepthTransition(amount: 1), identity: DepthTransition(amount: 0)),
+            removal: .modifier(active: DepthTransition(amount: -1), identity: DepthTransition(amount: 0))
+        )
+    }
+}

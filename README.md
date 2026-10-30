@@ -87,7 +87,7 @@ Full Disk Access — and that's in the roadmap, not in this version.
 
 ## Build and run
 
-Requires macOS 13+ and Xcode (or the Command Line Tools).
+Requires macOS 14+ and Xcode (or the Command Line Tools).
 
 ```bash
 git clone <this-repo>
@@ -134,7 +134,10 @@ Sources/
     RadialMenuView.swift     drawing + spring animations
     RadialController.swift   panel lifecycle, keyboard routing
     Animation.swift          spring integrator + frame driver
-    BookmarkManagerView.swift / SettingsView.swift / ...
+    BookmarkManagerView.swift  the tabbed window shell (Dial / Library / Import / Settings)
+    ManagerTabs.swift          tab enum, router, brass tab bar
+    BrassUI.swift              motion springs, pointer light, brass toggle/segmented/slider
+    DialTabView / LibraryTabView / ImportTabView / SettingsView / AddComposer
 Tests/RadialCoreTests/  68 tests
 scripts/build.sh        .app assembly + signing
 ```

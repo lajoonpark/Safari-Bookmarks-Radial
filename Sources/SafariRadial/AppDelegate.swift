@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusMenu: NSMenu!
     private var managerWindow: NSWindow?
     private var quickAddWindow: NSWindow?
-    private var settingsWindow: NSWindow?
+    private let router = ManagerRouter()
     private var onboardingWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -209,7 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func syncNow() {
         listModel.syncFromSafari()
-        openManager()
+        openManager(tab: .importer)
     }
 
     @objc private func quit() {
@@ -286,7 +286,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openManager()
     }
 
-    private func openManager(focusNewLink: Bool = false) {
+    private func openManager(focusNewLink: Bool = false, tab: ManagerTab? = nil) {
+        if let tab { router.tab = tab }
         if let managerWindow {
             present(managerWindow)
             listModel.reload()
@@ -294,15 +295,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let view = BookmarkManagerView(model: listModel, settings: settingsModel) { [weak self] in
-            self?.showSettingsWindow()
-        }
+        let view = BookmarkManagerView(
+            model: listModel,
+            settings: settingsModel,
+            router: router,
+            onOpenDial: { [weak self] in self?.radialController.present() }
+        )
         let hosting = NSHostingController(rootView: view)
         let window = NSWindow(contentViewController: hosting)
         window.title = "Safari Radial"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-        window.setContentSize(NSSize(width: 880, height: 640))
-        window.minSize = NSSize(width: 760, height: 560)
+        window.setContentSize(NSSize(width: 1040, height: 720))
+        window.minSize = NSSize(width: 900, height: 640)
+        // The desk's light follows the cursor, which needs move events even while idle.
+        window.acceptsMouseMovedEvents = true
         window.center()
         window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
@@ -317,26 +323,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if focusNewLink { listModel.focusRequest += 1 }
     }
 
+    /// Settings are a tab of the manager window, not a window of their own.
     @objc private func showSettingsWindow() {
-        if let settingsWindow {
-            present(settingsWindow)
-            settingsModel.refresh()
-            return
-        }
-
         settingsModel.refresh()
-        let hosting = NSHostingController(rootView: SettingsView(model: settingsModel))
-        let window = NSWindow(contentViewController: hosting)
-        window.title = "Settings"
-        window.styleMask = [.titled, .closable]
-        window.isReleasedWhenClosed = false
-        window.center()
-        window.backgroundColor = Palette.nsVoid
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.delegate = self
-        settingsWindow = window
-
-        present(window)
+        openManager(tab: .settings)
     }
 
     @objc private func showOnboarding() {
@@ -399,7 +389,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func restoreAccessoryPolicyIfNeeded() {
-        let hasVisibleWindow = [managerWindow, settingsWindow, onboardingWindow]
+        let hasVisibleWindow = [managerWindow, onboardingWindow]
             .compactMap { $0 }
             .contains { $0.isVisible }
         if !hasVisibleWindow {

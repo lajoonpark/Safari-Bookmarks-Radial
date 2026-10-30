@@ -121,43 +121,87 @@ extension View {
 /// Secondary action: quiet until pressed, which is where this product spends its motion.
 struct QuietButtonStyle: ButtonStyle {
     var tint: Color = Palette.bone
+    /// Type size; padding scales with it, so the same style serves a sheet and a hero.
+    var size: CGFloat = 12
 
     func makeBody(configuration: Configuration) -> some View {
+        QuietButtonBody(configuration: configuration, tint: tint, size: size)
+    }
+}
+
+private struct QuietButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let tint: Color
+    let size: CGFloat
+
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        let lit = configuration.isPressed || hovering
         configuration.label
-            .font(Palette.display(12, .medium))
+            .font(Palette.display(size, .medium))
             .foregroundStyle(configuration.isPressed ? tint.opacity(0.75) : tint)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.horizontal, size)
+            .padding(.vertical, size * 0.5)
             .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(configuration.isPressed ? Palette.hullLift : Palette.hull)
+                RoundedRectangle(cornerRadius: 7 + size * 0.2, style: .continuous)
+                    .fill(lit ? Palette.hullLift : Palette.hull)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(Palette.rim, lineWidth: 1)
+                RoundedRectangle(cornerRadius: 7 + size * 0.2, style: .continuous)
+                    .strokeBorder(hovering ? Palette.rimStrong : Palette.rim, lineWidth: 1)
             )
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .animation(.spring(response: 0.26, dampingFraction: 0.66), value: configuration.isPressed)
+            .shadow(color: Color.black.opacity(hovering && isEnabled ? 0.4 : 0), radius: 10, y: 5)
+            .offset(y: hovering && !configuration.isPressed ? -2 : 0)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .opacity(isEnabled ? 1 : 0.4)
+            .onHover { hovering = $0 }
+            .motion(Motion.snap, value: configuration.isPressed)
+            .motion(Motion.snap, value: hovering)
     }
 }
 
 /// The one loud button on screen. Used at most once per view.
 struct SignalButtonStyle: ButtonStyle {
     var isEnabled = true
+    var size: CGFloat = 12
 
     func makeBody(configuration: Configuration) -> some View {
+        SignalButtonBody(configuration: configuration, isEnabled: isEnabled, size: size)
+    }
+}
+
+private struct SignalButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let isEnabled: Bool
+    let size: CGFloat
+
+    @State private var hovering = false
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 7 + size * 0.2, style: .continuous)
         configuration.label
-            .font(Palette.display(12, .semibold))
+            .font(Palette.display(size, .semibold))
             .foregroundStyle(Palette.signalInk)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
+            .padding(.horizontal, size * 1.15)
+            .padding(.vertical, size * 0.58)
             .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Palette.signal.opacity(isEnabled ? 1 : 0.28))
+                shape.fill(LinearGradient(
+                    colors: [Palette.signal.opacity(isEnabled ? 1 : 0.28), Palette.signal.opacity(isEnabled ? 0.86 : 0.24)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ))
             )
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .overlay(shape.strokeBorder(Color.white.opacity(isEnabled ? 0.28 : 0), lineWidth: 0.5))
+            .brassSheen(in: shape)
+            .shadow(color: Palette.signal.opacity(isEnabled ? (hovering ? 0.5 : 0.25) : 0), radius: hovering ? 16 : 9, y: hovering ? 6 : 4)
+            .offset(y: hovering && isEnabled && !configuration.isPressed ? -2 : 0)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .brightness(configuration.isPressed ? -0.07 : 0)
-            .animation(.spring(response: 0.24, dampingFraction: 0.62), value: configuration.isPressed)
+            .onHover { hovering = $0 }
+            .motion(Motion.snap, value: configuration.isPressed)
+            .motion(Motion.snap, value: hovering)
     }
 }
 
