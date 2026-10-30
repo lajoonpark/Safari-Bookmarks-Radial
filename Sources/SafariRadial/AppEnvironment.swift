@@ -25,6 +25,21 @@ final class AppEnvironment {
         var error: Error?
     }
 
+    struct PreviewReport {
+        var preview: BookmarkStore.MergePreview?
+        var error: Error?
+    }
+
+    /// What `syncFromSafari` would do, without doing it.
+    func previewSafariImport() -> PreviewReport {
+        do {
+            let remote = try SafariBookmarksReader.read()
+            return PreviewReport(preview: store.previewMerge(remote), error: nil)
+        } catch {
+            return PreviewReport(preview: nil, error: error)
+        }
+    }
+
     /// Applies one-time preference migrations and persists the result.
     ///
     /// Called at launch before anything reads `preferences`, so the rest of the app only ever

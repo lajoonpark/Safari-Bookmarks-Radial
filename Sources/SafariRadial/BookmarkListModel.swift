@@ -131,6 +131,12 @@ final class BookmarkListModel: ObservableObject {
         }
     }
 
+    /// A dry run of the Safari import, for the Import tab: what would land, and where.
+    func previewSafariImport() -> (preview: BookmarkStore.MergePreview?, error: String?) {
+        let report = environment.previewSafariImport()
+        return (report.preview, report.error?.localizedDescription)
+    }
+
     func openFullDiskAccessSettings() {
         let urls = [
             "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",

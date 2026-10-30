@@ -211,6 +211,50 @@ final class BookmarkStoreTests: XCTestCase {
         XCTAssertEqual(store.bookmarks[0].folder, "Dev")
     }
 
+    func testPreviewReportsExactlyWhatTheMergeThenDoes() {
+        let existing = [
+            Bookmark(title: "One", url: "https://one.com"),
+            Bookmark(title: "Two", url: "https://two.com"),
+        ]
+        let incoming = [
+            Bookmark(title: "Two Renamed", url: "https://two.com"),
+            Bookmark(title: "Three", url: "https://three.com"),
+            Bookmark(title: "Four", url: "https://four.com"),
+            Bookmark(title: "One", url: "https://one.com"),
+        ]
+        let store = BookmarkStore(bookmarks: existing)
+        let preview = store.previewMerge(incoming)
+
+        XCTAssertEqual(preview.result.added, 2)
+        XCTAssertEqual(preview.result.updated, 1)
+        XCTAssertEqual(preview.result.unchanged, 1)
+        XCTAssertEqual(preview.added.map(\.title), ["Three", "Four"])
+
+        let real = store.merge(incoming, save: false)
+        XCTAssertEqual(real, preview.result)
+        XCTAssertEqual(store.bookmarks.suffix(2).map(\.title), preview.added.map(\.title))
+    }
+
+    func testPreviewLeavesTheStoreAlone() {
+        let store = BookmarkStore(bookmarks: [Bookmark(title: "One", url: "https://one.com")])
+        _ = store.previewMerge([
+            Bookmark(title: "One Renamed", url: "https://one.com"),
+            Bookmark(title: "New", url: "https://new.com"),
+        ])
+        XCTAssertEqual(store.bookmarks.map(\.title), ["One"])
+    }
+
+    func testPreviewCountsADuplicateInsideTheImportOnce() {
+        let store = BookmarkStore()
+        let preview = store.previewMerge([
+            Bookmark(title: "A", url: "https://a.com"),
+            Bookmark(title: "A again", url: "https://a.com"),
+            Bookmark(title: "Not a web link", url: "ftp://files.example.com"),
+        ])
+        XCTAssertEqual(preview.added.count, 1)
+        XCTAssertEqual(preview.result.added, 1)
+    }
+
     func testMoveReorders() {
         let store = BookmarkStore(bookmarks: (0..<3).map {
             Bookmark(title: "\($0)", url: "https://s\($0).com")

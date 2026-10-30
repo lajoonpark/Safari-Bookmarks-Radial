@@ -13,6 +13,14 @@ public final class BookmarkStore {
         public var total: Int { added + updated + unchanged }
     }
 
+    /// What an import would do, worked out without doing it.
+    public struct MergePreview: Equatable {
+        /// The counts a real merge would report.
+        public var result: MergeResult
+        /// The links that would be appended, in the order they would land, already normalised.
+        public var added: [Bookmark]
+    }
+
     public private(set) var bookmarks: [Bookmark]
     public let fileURL: URL?
     private let fileManager: FileManager
@@ -181,6 +189,16 @@ public final class BookmarkStore {
         }
         if shouldSave { save() }
         return result
+    }
+
+    /// A dry run of `merge`: what it would add, rename and leave alone, with the store untouched.
+    ///
+    /// It runs the real merge on a scratch copy that has no file, so the preview cannot drift from
+    /// the import it promises: whatever `merge` does, this reports, because it is the same code.
+    public func previewMerge(_ incoming: [Bookmark]) -> MergePreview {
+        let scratch = BookmarkStore(bookmarks: bookmarks)
+        let result = scratch.merge(incoming, save: false)
+        return MergePreview(result: result, added: Array(scratch.bookmarks.dropFirst(bookmarks.count)))
     }
 
     public func replaceAll(_ bookmarks: [Bookmark], save shouldSave: Bool = true) {
