@@ -99,10 +99,10 @@ final class CompassRenderer {
 extension CompassRenderer {
 
     /// A circle in card space, sampled densely enough that the projection shows no facets.
-    func circle(_ radius: CGFloat, _ state: State, steps: Int = 96) -> [CGPoint] {
+    func circle(_ radius: CGFloat, _ state: State, z: CGFloat = 0, steps: Int = 96) -> [CGPoint] {
         (0...steps).map { step in
             let angle = CGFloat(step) / CGFloat(steps) * 2 * .pi
-            return state.camera.project(x: radius * sin(angle), y: -radius * cos(angle))
+            return state.camera.project(x: radius * sin(angle), y: -radius * cos(angle), z: z)
         }
     }
 

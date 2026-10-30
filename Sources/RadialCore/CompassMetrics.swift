@@ -50,6 +50,9 @@ public struct CompassMetrics: Equatable, Sendable {
     public var cardDepth: CGFloat { cardRadius * 0.020 }
     /// Brass boss at the centre.
     public var hubRadius: CGFloat { cardRadius * 0.185 }
+    /// How far the boss stands proud of the card. Enough that its wall shows and its top shifts
+    /// against the print as the case leans; a boss with no height reads as a sticker.
+    public var hubHeight: CGFloat { cardRadius * 0.065 }
     /// The window in the boss that reads back the aimed slot.
     public var hubWindowRadius: CGFloat { hubRadius * 0.56 }
     public var hubPinRadius: CGFloat { cardRadius * 0.018 }

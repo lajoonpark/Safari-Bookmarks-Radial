@@ -1198,6 +1198,7 @@ final class CompassMetricsTests: XCTestCase {
         let large = CompassMetrics(cardRadius: 200)
         XCTAssertEqual(large.caseRadius, small.caseRadius * 2, accuracy: 1e-9)
         XCTAssertEqual(large.hubRadius, small.hubRadius * 2, accuracy: 1e-9)
+        XCTAssertEqual(large.hubHeight, small.hubHeight * 2, accuracy: 1e-9)
         XCTAssertEqual(large.labelRadius, small.labelRadius * 2, accuracy: 1e-9)
     }
 
