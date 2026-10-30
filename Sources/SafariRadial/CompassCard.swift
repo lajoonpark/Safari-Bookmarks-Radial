@@ -139,7 +139,7 @@ extension CompassRenderer {
                 RadialLayout.keyLabel(forSlice: index),
                 at: anchor,
                 scale: inkScale(at: point, state),
-                font: CompassTheme.serif(max(8, metrics.cardRadius * 0.065), .semibold),
+                font: CompassTheme.serif(metrics.numeralFontSize, .semibold),
                 colour: hover > 0.3
                     ? CompassTheme.vermilion.withAlphaComponent(0.55 + 0.45 * Double(hover))
                     : CompassTheme.ink.withAlphaComponent(0.94),
@@ -281,15 +281,18 @@ extension CompassRenderer {
         // Where the sweep's leading edge is, as a fraction of a turn clockwise from 12 o'clock. It is
         // the same easing `drawSweep` uses, so each label lights as the edge reaches its bearing.
         let edge = Easing.outQuint(min(1, max(0, state.sweep)))
+        let size = metrics.labelFontSize(sliceCount: state.slices.count)
+        let radius = metrics.labelRadius
 
         for index in 0..<max(1, state.slices.count) {
             guard let bookmark = state.slices[safe: index] else { continue }
-            let hover = index < state.hover.count ? min(1, max(0, state.hover[index])) : 0
             let angle = layout.centerAngle(of: index)
-            let radius = metrics.labelRadius
-            let point = Point3D(radius: radius, angle: angle)
-            let anchor = state.camera.project(x: point.x, y: point.y, z: metrics.cardDepth)
-            let scale = inkScale(at: point, state)
+            let anchor = state.camera.project(
+                x: radius * sin(angle), y: -radius * cos(angle), z: metrics.cardDepth
+            )
+            let scale = inkScale(at: Point3D(radius: radius, angle: angle), state)
+
+            let hover = index < state.hover.count ? min(1, max(0, state.hover[index])) : 0
 
             // The labels come in clockwise with the sweep. The reveal is measured against the edge scaled
             // by 1.22, so the last slot (a bearing under one turn) is fully inked before the sweep settles,
@@ -298,16 +301,12 @@ extension CompassRenderer {
             let revealed = Easing.smoothstep(min(1, max(0, (1.22 * edge - bearing) / 0.22)))
             let labelAlpha = alpha * CGFloat(max(Double(hover), revealed))
 
-            // Ask the *same* layout the hit test uses how wide a box fits inside this wedge.
-            let boxHeight: CGFloat = bookmark.subtitle.isEmpty ? 20 : 34
-            let limit = layout.labelWidthLimit(for: index, radius: radius, height: boxHeight, pad: 7)
-            let maxWidth = max(34, min(limit, metrics.cardRadius * 0.60))
-
-            let title = fittedTitle(
+            let label = fittedLabel(
                 bookmark.displayTitle,
-                maxWidth: maxWidth,
-                hover: hover,
-                alpha: labelAlpha,
+                size: size,
+                index: index,
+                radius: radius,
+                layout: layout,
                 metrics: metrics
             )
 
@@ -325,61 +324,90 @@ extension CompassRenderer {
             context.clip()
 
             let box = CGRect(
-                x: anchor.x - maxWidth / 2,
-                y: anchor.y - title.size().height / 2 + pageShift - (bookmark.subtitle.isEmpty ? 0 : 6 * scale),
-                width: maxWidth,
-                height: title.size().height
+                x: anchor.x - label.width / 2,
+                y: anchor.y - label.height / 2 + pageShift,
+                width: label.width,
+                height: label.height
             )
-            draw(squashed: title, in: box, scale: scale, context: context)
-
-            if !bookmark.subtitle.isEmpty, maxWidth >= 44 {
-                let subtitle = NSAttributedString(string: bookmark.subtitle, attributes: [
-                    .font: CompassTheme.serif(max(6, metrics.cardRadius * 0.040)),
-                    .foregroundColor: CompassTheme.inkSubtle
-                        .withAlphaComponent((0.90 + 0.10 * Double(hover)) * Double(labelAlpha)),
-                ])
-                let subBox = CGRect(
-                    x: anchor.x - maxWidth / 2,
-                    y: box.maxY + 1,
-                    width: maxWidth,
-                    height: 14
-                )
-                draw(squashed: subtitle, in: subBox, scale: scale, context: context)
-            }
+            // Halo first, ink on top. The needle passes under the aimed name, and dark ink on
+            // vermilion is unreadable without a pale rim to lift the letters off it.
+            draw(squashed: label.halo(alpha: labelAlpha), in: box, scale: scale, context: context)
+            draw(squashed: label.ink(alpha: labelAlpha), in: box, scale: scale, context: context)
             context.restoreGState()
         }
     }
 
-    /// Largest size that fits the wedge on one line, with truncation as the backstop.
-    ///
-    /// Shrinking before truncating is what keeps "Apple Developer" whole at nine slices, where
-    /// a fixed 13pt title would clip to "Apple Devel…".
-    private func fittedTitle(
-        _ text: String,
-        maxWidth: CGFloat,
-        hover: CGFloat,
-        alpha: CGFloat,
-        metrics: CompassMetrics
-    ) -> NSAttributedString {
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
-        paragraph.lineBreakMode = .byTruncatingTail
+    /// One wedge name, laid out at the page's shared size.
+    private struct WedgeLabel {
+        let text: String
+        let size: CGFloat
+        let wraps: Bool
+        let width: CGFloat
+        let height: CGFloat
 
-        let base = max(8, metrics.cardRadius * 0.065)
-        var chosen = NSAttributedString(string: text)
-        for step in stride(from: 0, through: 10, by: 1) {
-            let size = base - CGFloat(step) * (base * 0.05)
-            guard size > metrics.cardRadius * 0.038 else { break }
-            let string = NSAttributedString(string: text, attributes: [
-                .font: CompassTheme.serif(size, .semibold),
-                .foregroundColor: CompassTheme.ink
-                    .withAlphaComponent((0.86 + 0.14 * Double(hover)) * Double(alpha)),
-                .paragraphStyle: paragraph,
-            ])
-            chosen = string
-            if string.size().width <= maxWidth { break }
+        private func attributed(_ attributes: [NSAttributedString.Key: Any]) -> NSAttributedString {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = .center
+            paragraph.lineBreakMode = wraps ? .byWordWrapping : .byTruncatingTail
+            var all = attributes
+            all[.font] = CompassTheme.label(size)
+            all[.paragraphStyle] = paragraph
+            return NSAttributedString(string: text, attributes: all)
         }
-        return chosen
+
+        func ink(alpha: CGFloat) -> NSAttributedString {
+            attributed([.foregroundColor: CompassTheme.ink.withAlphaComponent(alpha)])
+        }
+
+        /// Stroke-only copy in paper colour. A positive `strokeWidth` draws the outline alone.
+        func halo(alpha: CGFloat) -> NSAttributedString {
+            attributed([
+                .foregroundColor: NSColor.clear,
+                .strokeColor: CompassTheme.paperLit.withAlphaComponent(0.78 * alpha),
+                .strokeWidth: 18,
+            ])
+        }
+    }
+
+    /// Lays a name out at `size`: one line if the wedge has the room, otherwise two lines at
+    /// the *same* size, with truncation only as the backstop.
+    ///
+    /// The old approach shrank the type until it fitted, which is what made labels differ in
+    /// size. Here the size is fixed and the wedge's room is spent in height instead.
+    private func fittedLabel(
+        _ text: String,
+        size: CGFloat,
+        index: Int,
+        radius: CGFloat,
+        layout: RadialLayout,
+        metrics: CompassMetrics
+    ) -> WedgeLabel {
+        let font = CompassTheme.label(size)
+        let lineHeight = ceil(font.ascender - font.descender + font.leading)
+        let cap = metrics.cardRadius * 0.60
+
+        func room(lines: CGFloat) -> CGFloat {
+            let limit = layout.labelWidthLimit(for: index, radius: radius, height: lineHeight * lines, pad: metrics.labelPad)
+            return max(34, min(limit, cap))
+        }
+        func width(_ string: String) -> CGFloat {
+            ceil(NSAttributedString(string: string, attributes: [.font: font]).size().width)
+        }
+
+        let oneLine = room(lines: 1)
+        let whole = width(text)
+        if whole <= oneLine {
+            return WedgeLabel(text: text, size: size, wraps: false, width: oneLine, height: lineHeight)
+        }
+
+        // Two lines only help if every word fits on one; a single long word has to truncate
+        // on its own line rather than break mid-word.
+        let twoLines = room(lines: 2)
+        let longest = text.split(separator: " ").map { width(String($0)) }.max() ?? whole
+        if longest <= twoLines, text.contains(" ") {
+            return WedgeLabel(text: text, size: size, wraps: true, width: twoLines, height: lineHeight * 2)
+        }
+        return WedgeLabel(text: text, size: size, wraps: false, width: oneLine, height: lineHeight)
     }
 
     // MARK: - Hub

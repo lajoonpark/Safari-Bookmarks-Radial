@@ -64,7 +64,33 @@ public struct CompassMetrics: Equatable, Sendable {
     /// The slot numerals sit in gates cut through the scale at each bearing.
     public var numeralRadius: CGFloat { cardRadius * 0.930 }
     /// Radius of a wedge's name.
-    public var labelRadius: CGFloat { cardRadius * 0.575 }
+    ///
+    /// Pushed out from 0.575: a wedge is wider the further it is from the hub, and the extra
+    /// room is what lets every name print at one size instead of shrinking to fit.
+    public var labelRadius: CGFloat { cardRadius * 0.630 }
+
+    /// The one size every wedge name is printed at.
+    ///
+    /// A single value per page, never per label. Names used to shrink independently until they
+    /// fitted their wedge, so one long bookmark ("Artificial Analysis") ended up at half the
+    /// size of its neighbours and the dial read as uneven. Long names now wrap onto a second
+    /// line at this same size instead. Nine wedges are narrower than eight, hence the step.
+    public func labelFontSize(sliceCount: Int) -> CGFloat {
+        let share: CGFloat = sliceCount > 8 ? 0.066 : 0.072
+        return max(CompassMetrics.minimumLabelSize, cardRadius * share)
+    }
+
+    /// Smallest a wedge name is ever printed. Above the proportional share at small cards,
+    /// which is deliberate: legible beats proportional. Not higher, because at the 110pt
+    /// minimum card a bigger floor leaves wedges too narrow and names truncate hard.
+    public static let minimumLabelSize: CGFloat = 10
+
+    /// Breathing room between a name and its wedge walls. Scales with the card, because a fixed
+    /// 7pt eats a third of a small card's wedge.
+    public var labelPad: CGFloat { min(7, cardRadius * 0.035) }
+
+    /// Slot numerals, printed in gates cut through the degree scale.
+    public var numeralFontSize: CGFloat { max(9, cardRadius * 0.072) }
 
     // MARK: Furniture
 

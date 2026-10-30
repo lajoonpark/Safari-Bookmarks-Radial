@@ -53,7 +53,7 @@ const AT_MS = Q.has('at') ? parseFloat(Q.get('at')) : null;
 const CLOSE_AT_MS = Q.has('closeat') ? parseFloat(Q.get('closeat')) : null;
 const AGE = Q.has('age') ? parseFloat(Q.get('age')) : 1.3;
 
-const SLICES = [
+const SLICES_DEFAULT = [
   { title: "GitHub",          sub: "github.com" },
   { title: "Hacker News",     sub: "news.ycombinator.com" },
   { title: "Apple Developer", sub: "developer.apple.com" },
@@ -64,6 +64,10 @@ const SLICES = [
   { title: "Notion",          sub: "notion.so" },
   { title: "Are.na",          sub: "are.na" }
 ];
+// ?names=A,B,C swaps in your own bookmark names, to see how real titles lay out.
+const SLICES = Q.has('names')
+  ? Q.get('names').split(',').map(t => ({ title: t.trim(), sub: '' }))
+  : SLICES_DEFAULT;
 
 // Colours sampled from the reference: warm cream card, tarnished brass, sepia ink.
 const C = {
@@ -96,7 +100,7 @@ const P = {
   scaleIn:   0.895,
   scaleOut:  0.985,
   numeralR:  0.930,   // in a gate cut through the tick ring, on cream
-  labelR:    0.575,
+  labelR:    0.63,
   lid:       LID_OVERRIDE || 0.95,    // lid outer radius, as a multiple of the case's: it closes inside the lip, and perspective makes up the difference when it stands
   lidDepth:  0.105,                   // how deep the dish is, so the lid has a wall rather than an edge
   lidWall:   0.045,                   // wall thickness
@@ -320,6 +324,13 @@ function text(str, anchor, o) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   if (o.tracking) ctx.letterSpacing = `${o.tracking * s}px`;
+  if (o.halo) {
+    // Pale rim under the ink, so type stays readable where the needle passes beneath it.
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = size * 0.17;
+    ctx.strokeStyle = o.halo;
+    ctx.strokeText(str, 0, 0);
+  }
   ctx.fillText(str, 0, 0);
   ctx.restore();
 }
@@ -1307,7 +1318,7 @@ function drawCardPrinting() {
     const h = Math.max(0, Math.min(1, S.hover[i].value));
     const anchor = project(R * P.numeralR * Math.sin(a), -R * P.numeralR * Math.cos(a), z);
     text(String(i + 1), anchor, {
-      size: 13,
+      size: Math.max(9, R * 0.072),
       font: SERIF,
       weight: '600',
       color: h > 0.3 ? C.vermilion : 'rgba(40,28,14,.94)'
@@ -1374,33 +1385,59 @@ function labelWidthLimit(index, radius, height, pad) {
   return lo;
 }
 
+// One size for every name on the page. Names used to shrink one by one until they fitted
+// their wedge, which left the longest at half the size of its neighbours. Long names now
+// wrap onto a second line at this same size; truncation is only the backstop.
+const LABEL_MIN = 10;
+const labelSize = () => Math.max(LABEL_MIN, R * (SLICES.length > 8 ? 0.066 : 0.072));
+const LABEL_FACE = `700 {px} ${SERIF}`;
+
+function layoutLabel(i, rr, size) {
+  const font = LABEL_FACE.replace('{px}', size + 'px');
+  const lineH = Math.ceil(size * 1.22);
+  const cap = R * 0.60;
+  const room = lines => Math.max(34, Math.min(labelWidthLimit(i, rr, lineH * lines, Math.min(7, R * 0.035)), cap));
+  ctx.save();
+  ctx.font = font;
+  const wide = s => ctx.measureText(s).width;
+  const title = SLICES[i].title;
+  const one = room(1);
+  let lines = [title], w = one;
+  if (wide(title) > one) {
+    const two = room(2);
+    const words = title.split(' ');
+    if (words.length > 1 && Math.max(...words.map(wide)) <= two) {
+      // Greedy wrap into at most two lines; the second is cut with an ellipsis if it still overflows.
+      let first = words[0], k = 1;
+      while (k < words.length - 1 && wide(first + ' ' + words[k]) <= two) first += ' ' + words[k++];
+      let second = words.slice(k).join(' ');
+      while (second.length > 1 && wide(second) > two) second = second.slice(0, -2).trimEnd() + '…';
+      lines = [first, second];
+      w = two;
+    } else {
+      let t = title;
+      while (t.length > 1 && wide(t) > one) t = t.slice(0, -2).trimEnd() + '…';
+      lines = [t];
+    }
+  }
+  ctx.restore();
+  return { lines, lineH, width: w };
+}
+
 function drawLabels() {
   const z = R * P.top;
+  const size = labelSize();
   for (let i = 0; i < SLICES.length; i++) {
-    const h = Math.max(0, Math.min(1, S.hover[i].value));
     const a = i * step();
     const rr = R * P.labelR;
     const anchor = project(rr * Math.sin(a), -rr * Math.cos(a), z);
-    const boxH = 24;
-    const maxW = Math.max(34, Math.min(labelWidthLimit(i, rr, boxH, 7), R * 0.60));
-
-    let size = 13;
-    ctx.save();
-    ctx.font = `600 ${size}px ${SERIF}`;
-    while (size > 7.5 && ctx.measureText(SLICES[i].title).width > maxW) {
-      size -= 0.5;
-      ctx.font = `600 ${size}px ${SERIF}`;
-    }
-    ctx.restore();
-
-    text(SLICES[i].title, { x: anchor.x, y: anchor.y - 5 * anchor.s, s: anchor.s }, {
-      size, font: SERIF, weight: '600', color: `rgba(47,35,21,${0.84 + 0.16 * h})`
-    });
-    if (maxW >= 44) {
-      text(SLICES[i].sub, { x: anchor.x, y: anchor.y + 9 * anchor.s, s: anchor.s }, {
-        size: 7.4, font: MONO, color: `rgba(93,74,52,${0.58 + 0.32 * h})`
+    const { lines, lineH } = layoutLabel(i, rr, size);
+    lines.forEach((line, k) => {
+      const dy = (k - (lines.length - 1) / 2) * lineH * anchor.s;
+      text(line, { x: anchor.x, y: anchor.y + dy, s: anchor.s }, {
+        size, font: SERIF, weight: '700', color: 'rgb(47,35,21)', halo: 'rgba(224,209,177,.78)'
       });
-    }
+    });
   }
 }
 

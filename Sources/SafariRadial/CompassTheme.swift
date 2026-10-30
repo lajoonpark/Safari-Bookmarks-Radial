@@ -45,8 +45,6 @@ enum CompassTheme {
 
     /// Slice names. 9.3:1 on `paper`, 6.3:1 on the aged rim.
     static let ink = NSColor(calibratedRed: 0.200, green: 0.149, blue: 0.102, alpha: 1)
-    /// Host names. 6.9:1 on `paper`, 4.7:1 on the aged rim.
-    static let inkSubtle = NSColor(calibratedRed: 0.286, green: 0.231, blue: 0.157, alpha: 1)
     /// The printed degree scale and the engraved rules. Decoration, so it may sit lower.
     static let inkRule = NSColor(calibratedRed: 0.227, green: 0.173, blue: 0.102, alpha: 1)
 
@@ -130,6 +128,15 @@ enum CompassTheme {
             if let font = NSFont(name: name, size: size) { return font }
         }
         return NSFont.systemFont(ofSize: size, weight: weight)
+    }
+
+    /// The face wedge names are printed in: Baskerville Bold, because the semibold's hairlines
+    /// disappear into the card's grain at dial sizes.
+    static func label(_ size: CGFloat) -> NSFont {
+        for name in ["Baskerville-Bold", "Palatino-Bold", "TimesNewRomanPS-BoldMT"] {
+            if let font = NSFont(name: name, size: size) { return font }
+        }
+        return NSFont.systemFont(ofSize: size, weight: .bold)
     }
 
     // MARK: - Printing

@@ -941,6 +941,49 @@ final class CompassMetricsTests: XCTestCase {
         XCTAssertEqual(large.labelRadius, small.labelRadius * 2, accuracy: 1e-9)
     }
 
+    func testWedgeNamesPrintAtOneSizePerPage() {
+        // The size is a function of the card and the slice count only, so no name on a page can
+        // end up smaller than its neighbours.
+        let metrics = CompassMetrics(cardRadius: 200)
+        for count in 2...8 {
+            XCTAssertEqual(metrics.labelFontSize(sliceCount: count), metrics.labelFontSize(sliceCount: 8))
+        }
+        XCTAssertLessThanOrEqual(metrics.labelFontSize(sliceCount: 9), metrics.labelFontSize(sliceCount: 8))
+    }
+
+    func testWedgeNamesNeverPrintBelowTheFloor() {
+        for radius in [110.0, 140.0, 200.0, 320.0] as [CGFloat] {
+            let metrics = CompassMetrics(cardRadius: radius)
+            for count in 1...RadialLayout.maxSlicesPerPage {
+                XCTAssertGreaterThanOrEqual(
+                    metrics.labelFontSize(sliceCount: count), CompassMetrics.minimumLabelSize
+                )
+            }
+        }
+        // At the default size names are comfortably larger than the ~8pt the shrink-to-fit
+        // loop used to leave the longest ones at.
+        XCTAssertGreaterThanOrEqual(CompassMetrics(cardRadius: 200).labelFontSize(sliceCount: 8), 14)
+    }
+
+    func testLabelsKeepRoomForTwoLinesInsideTheirWedge() {
+        // Two lines of the label size must fit a wedge at every count, or wrapping would just
+        // move the overflow from width to height.
+        let metrics = CompassMetrics(cardRadius: 200)
+        for count in 2...RadialLayout.maxSlicesPerPage {
+            let layout = RadialLayout(
+                sliceCount: count, centerRadius: metrics.hubRadius, outerRadius: metrics.sectorOutset
+            )
+            let height = metrics.labelFontSize(sliceCount: count) * 2.4
+            for index in 0..<count {
+                XCTAssertGreaterThan(
+                    layout.labelWidthLimit(for: index, radius: metrics.labelRadius, height: height, pad: metrics.labelPad),
+                    50,
+                    "n=\(count) i=\(index)"
+                )
+            }
+        }
+    }
+
     func testBandsAreOrderedOutwardFromTheHub() {
         let metrics = CompassMetrics(cardRadius: 200)
         XCTAssertLessThan(metrics.hubRadius, metrics.sectorInset)
