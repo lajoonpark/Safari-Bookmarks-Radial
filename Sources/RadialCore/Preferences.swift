@@ -14,8 +14,8 @@ public struct Preferences: Codable, Equatable {
     public var autoSyncOnLaunch: Bool
     /// Reveal the number badge on each slice.
     public var showNumbers: Bool
-    /// Draw the compass with its hard-edged wear: scratches, dents, chips, rust and folds. Off
-    /// shows the cleaner, softly aged instrument.
+    /// Draw the compass with its hard-edged wear: scratches, dents, chips, rust and folds. Off by
+    /// default, which shows the cleaner, softly aged instrument; the tour offers the choice.
     public var compassWorn: Bool
     /// Radius of the menu in points.
     public var menuRadius: Double
@@ -47,7 +47,7 @@ public struct Preferences: Codable, Equatable {
         openInBackground: Bool = false,
         autoSyncOnLaunch: Bool = true,
         showNumbers: Bool = true,
-        compassWorn: Bool = true,
+        compassWorn: Bool = false,
         menuRadius: Double = 200,
         launchAtLogin: Bool = false,
         hasCompletedOnboarding: Bool = false,

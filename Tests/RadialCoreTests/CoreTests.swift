@@ -405,18 +405,19 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(prefs.hotkey, .default)
     }
 
-    func testCompassIsWornByDefaultAndWhenTheKeyIsMissing() throws {
-        XCTAssertTrue(Preferences.default.compassWorn)
-        // An older preferences file has no such key, and must not quietly turn the wear off.
+    func testCompassIsCleanByDefaultAndWhenTheKeyIsMissing() throws {
+        XCTAssertFalse(Preferences.default.compassWorn)
+        // An older preferences file has no such key, so it gets the default rather than a choice
+        // it never made.
         let data = try JSONEncoder().encode(["showNumbers": false])
-        XCTAssertTrue(try JSONDecoder().decode(Preferences.self, from: data).compassWorn)
+        XCTAssertFalse(try JSONDecoder().decode(Preferences.self, from: data).compassWorn)
     }
 
     func testCompassWearSurvivesARoundTrip() throws {
         var prefs = Preferences()
-        prefs.compassWorn = false
+        prefs.compassWorn = true
         let decoded = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(prefs))
-        XCTAssertFalse(decoded.compassWorn)
+        XCTAssertTrue(decoded.compassWorn)
     }
 
     func testRoundTrip() throws {

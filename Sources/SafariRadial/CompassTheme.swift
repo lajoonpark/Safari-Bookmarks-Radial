@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import RadialCore
 
 /// The compass's materials.
 ///
@@ -41,7 +42,7 @@ enum CompassTheme {
     /// the overlay, the manager's embedded dial and the welcome art, and all of them should look
     /// the same at any moment. `SettingsModel` is the only writer. Off, the compass is the one
     /// that had only soft ageing: tarnish, foxing and buffing, none of the scars.
-    static var isWorn = true
+    static var isWorn = Preferences.default.compassWorn
 
     // MARK: - Paper
 

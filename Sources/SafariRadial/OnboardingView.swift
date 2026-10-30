@@ -2,13 +2,16 @@ import SwiftUI
 import AppKit
 import RadialCore
 
-/// First run, three steps.
+/// First run, four steps.
 ///
 /// This is the first thing anyone sees of the app, so it shows the instrument rather than
 /// describing it: the live compass sits beside the words and answers the pointer from the first
 /// frame.
 ///
-/// The middle step exists because Safari import genuinely needs Full Disk Access and that is
+/// The look step lets a new user choose between the clean compass and the worn one while
+/// watching it change, so the setting is a decision made at the start rather than one found later.
+///
+/// The Safari step exists because Safari import genuinely needs Full Disk Access and that is
 /// the kind of permission request people abandon an app over. So it is offered as an explicit
 /// choice, with the cost of skipping it stated plainly: the app is complete without it.
 struct OnboardingView: View {
@@ -40,9 +43,11 @@ struct OnboardingView: View {
     private var art: some View {
         ZStack {
             switch model.step {
-            case .welcome, .ready:
+            case .welcome, .look, .ready:
                 // The same instrument on both ends: first as a demonstration, last as the real
-                // thing, with your own slots on it if you have any.
+                // thing, with your own slots on it if you have any. The look step keeps the
+                // welcome step's compass rather than opening a new one, so flipping the switch
+                // changes the object you are already looking at.
                 LiveCompass(
                     bookmarks: model.dialBookmarks,
                     page: 0,
@@ -50,7 +55,7 @@ struct OnboardingView: View {
                     showsNumbers: true,
                     radius: 200
                 )
-                .id(model.step)
+                .id(model.step == .ready ? 1 : 0)
                 .transition(.opacity.combined(with: .scale(scale: 0.94)))
             case .safari:
                 VStack(spacing: 22) {
@@ -92,6 +97,7 @@ struct OnboardingView: View {
             Group {
                 switch model.step {
                 case .welcome: welcomeCopy
+                case .look: lookCopy
                 case .safari: safariCopy
                 case .ready: readyCopy
                 }
@@ -122,6 +128,18 @@ struct OnboardingView: View {
                     .foregroundStyle(Palette.boneDim)
             }
             paragraph("Then press 1–9, or click a wedge. Esc closes it without opening anything. Try hovering the compass.", dim: true)
+        }
+    }
+
+    private var lookCopy: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            paragraph("It is a century-old instrument either way. Clean is softly aged brass and paper. Worn adds what a life in a pocket does: scratches, dents, chipped plating and a little rust.")
+            BrassSegmented(
+                options: [false, true],
+                title: { $0 ? "Worn" : "Clean" },
+                selection: Binding(get: { model.worn }, set: { model.setWorn($0) })
+            )
+            paragraph("Pick whichever you like the look of; the compass on the left changes as you do. You can change it later in Settings, under Worn brass.", dim: true)
         }
     }
 
@@ -186,6 +204,9 @@ struct OnboardingView: View {
                     .buttonStyle(SignalButtonStyle(size: 16))
                 Button("Skip") { model.finish() }
                     .buttonStyle(QuietButtonStyle(tint: Palette.boneDim, size: 16))
+            case .look:
+                Button("Continue") { model.advance() }
+                    .buttonStyle(SignalButtonStyle(size: 16))
             case .safari:
                 Button("Open Full Disk Access") { model.requestFullDiskAccess() }
                     .buttonStyle(SignalButtonStyle(size: 16))
@@ -215,7 +236,7 @@ struct OnboardingView: View {
 
 // MARK: - Chrome
 
-/// Three brass pips: the current step stretches into a lit capsule.
+/// One brass pip per step: the current step stretches into a lit capsule.
 private struct StepPips: View {
     let step: OnboardingStep
 
@@ -237,12 +258,14 @@ private struct StepPips: View {
 
 enum OnboardingStep: Int, CaseIterable {
     case welcome = 0
+    case look
     case safari
     case ready
 
     var windowTitle: String {
         switch self {
         case .welcome: return "Welcome to Safari Radial"
+        case .look: return "Choose a look"
         case .safari: return "Safari import"
         case .ready: return "You are all set"
         }
@@ -250,15 +273,17 @@ enum OnboardingStep: Int, CaseIterable {
 
     var eyebrow: String {
         switch self {
-        case .welcome: return "STEP 1 OF 3"
-        case .safari: return "STEP 2 OF 3 · OPTIONAL"
-        case .ready: return "STEP 3 OF 3"
+        case .welcome: return "STEP 1 OF 4"
+        case .look: return "STEP 2 OF 4"
+        case .safari: return "STEP 3 OF 4 · OPTIONAL"
+        case .ready: return "STEP 4 OF 4"
         }
     }
 
     var title: String {
         switch self {
         case .welcome: return "Nine things,\none gesture."
+        case .look: return "How worn should\nit look?"
         case .safari: return "Bring your Safari\nbookmarks along"
         case .ready: return "Your dial is ready"
         }
@@ -267,6 +292,7 @@ enum OnboardingStep: Int, CaseIterable {
     var footerHint: String {
         switch self {
         case .welcome: return "You can reopen this tour from the menu bar at any time."
+        case .look: return "Purely cosmetic. Nothing else changes."
         case .safari: return "Nothing here is required to start using the app."
         case .ready: return "Reopen this tour from the menu bar any time."
         }
@@ -276,6 +302,7 @@ enum OnboardingStep: Int, CaseIterable {
 final class OnboardingModel: ObservableObject {
     @Published private(set) var step: OnboardingStep = .welcome
     @Published private(set) var hasBookmarks: Bool
+    @Published private(set) var worn: Bool
 
     let hotkeyDisplay: String
     private let environment: AppEnvironment
@@ -300,6 +327,14 @@ final class OnboardingModel: ObservableObject {
         self.environment = environment
         self.hotkeyDisplay = hotkey.displayName
         self.hasBookmarks = hasBookmarks
+        self.worn = environment.preferences.compassWorn
+    }
+
+    /// Applies the look straight away, so the compass beside the words answers the choice.
+    func setWorn(_ value: Bool) {
+        environment.updatePreferences { $0.compassWorn = value }
+        CompassTheme.isWorn = value
+        worn = value
     }
 
     func advance() {
