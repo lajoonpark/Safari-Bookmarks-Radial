@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Safari Radial — manager redesign (phase 0)</title>
+<style>
+  /* Phase 0 look-dev for the redesigned manager window.
+     Tokens mirror Sources/SafariRadial/Palette.swift and CompassTheme.swift (the brass/leather
+     language), so what is approved here is what gets ported to SwiftUI. Nothing in this file
+     ships; it exists so the look and the motion can be reviewed without a Mac.
+     Query params: ?tab=dial|library|import|settings  ?nolid  ?hover=N  ?compose  ?palette  ?edit */
+  :root {
+    --void: #1A1410; --void-raised: #241C16; --hull: #2A211A; --hull-lift: #352A21;
+    --rim: rgba(240,229,205,.10); --rim-strong: rgba(240,229,205,.24);
+    --bone: #F0E5CD; --bone-dim: rgba(240,229,205,.62); --bone-faint: rgba(240,229,205,.50);
+    --signal: #D97B46; --signal-ink: #201912; --mint: #8FBFA3; --alarm: #E0817A;
+    --brass-hi: #D5C08F; --brass-lit: #B39257; --brass-mid: #856636; --brass-dark: #5A4325; --brass-deep: #2F2717;
+    --paper: #DCCDAA; --paper-lit: #E0D1B1; --paper-deep: #BDA87E; --paper-edge: #87704A;
+    --ink: #33261A; --ink-subtle: #493B28; --vermilion: #8F3222; --vermilion-lit: #B4452E;
+    --serif: "Baskerville", "Libre Baskerville", "Baskerville Old Face", Georgia, "Times New Roman", serif;
+    --mono: ui-monospace, "SF Mono", Menlo, "DejaVu Sans Mono", monospace;
+    --spring: cubic-bezier(.34, 1.56, .64, 1);
+    --spring-soft: cubic-bezier(.22, 1.25, .36, 1);
+    --out: cubic-bezier(.16, 1, .3, 1);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0A0705; color: var(--bone); font-family: var(--serif);
+    -webkit-font-smoothing: antialiased; overflow: hidden; }
+  button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; padding: 0; }
+  input { font: inherit; color: inherit; }
+  ::placeholder { color: var(--bone-dim); }
+
+  .stage { position: fixed; inset: 0; display: grid; place-items: center;
+    background: radial-gradient(900px 600px at 50% 40%, #1d150f, #0A0705 70%); }
+  .scaler { width: 1040px; height: 720px; transform-origin: center; }
+  .note { position: fixed; left: 0; right: 0; bottom: 10px; text-align: center; font: 11px var(--mono);
+    color: rgba(240,229,205,.32); letter-spacing: .03em; }
+
+  /* ───────── Window ───────── */
+  .window { position: relative; width: 1040px; height: 720px; border-radius: 14px; overflow: hidden;
+    background: var(--void);
+    box-shadow: 0 0 0 1px rgba(240,229,205,.10), 0 40px 90px rgba(0,0,0,.65), 0 12px 30px rgba(0,0,0,.5);
+    isolation: isolate; }
+  /* Leather: fine noise plus a pool of warm light that follows the cursor. */
+  .window::before { content: ""; position: absolute; inset: 0; z-index: -2; opacity: .55; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' seed='3'/><feColorMatrix values='0 0 0 0 .5  0 0 0 0 .4  0 0 0 0 .3  0 0 0 .9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); }
+  .spot { position: absolute; inset: 0; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(520px 420px at var(--mx, 50%) var(--my, 30%), rgba(217,123,70,.13), transparent 70%),
+      radial-gradient(1200px 800px at 50% -10%, rgba(179,146,87,.07), transparent 60%),
+      radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,.45) 100%); }
+  .titlebar { position: absolute; top: 0; left: 0; right: 0; height: 52px; z-index: 30; pointer-events: none; display: flex; align-items: center; padding-left: 18px; gap: 8px; }
+  .titlebar i { width: 12px; height: 12px; border-radius: 50%; display: block; box-shadow: inset 0 0 0 .5px rgba(0,0,0,.35); }
+  .titlebar i:nth-child(1) { background: #ff5f57; } .titlebar i:nth-child(2) { background: #febc2e; } .titlebar i:nth-child(3) { background: #28c840; }
+
+  /* ───────── Tab bar: a brass pill with a sliding lit plate ───────── */
+  .tabs { position: absolute; z-index: 20; top: 22px; left: 50%; transform: translateX(-50%); display: flex; padding: 5px; gap: 2px;
+    border-radius: 999px; background: linear-gradient(180deg, #2f251d, #221a14);
+    box-shadow: inset 0 1px 0 rgba(240,229,205,.10), inset 0 -1px 0 rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.45), 0 0 0 1px rgba(240,229,205,.08); }
+  .tabs button { position: relative; z-index: 1; padding: 9px 22px; border-radius: 999px; font-size: 15px; font-weight: 600; letter-spacing: .01em;
+    color: var(--bone-dim); transition: color .25s, transform .3s var(--spring); }
+  .tabs button:hover { color: var(--bone); transform: translateY(-1px); }
+  .tabs button:active { transform: translateY(1px) scale(.97); }
+  .tabs button[aria-selected="true"] { color: var(--signal-ink); }
+  .tabs .plate { position: absolute; z-index: 0; top: 5px; bottom: 5px; left: 0; width: 80px; border-radius: 999px; overflow: hidden;
+    background: linear-gradient(180deg, var(--brass-hi), var(--brass-lit) 55%, #9c7d46);
+    box-shadow: 0 2px 8px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,245,215,.55), inset 0 -1px 0 rgba(60,40,10,.5);
+    transition: transform .55s var(--spring-soft), width .55s var(--spring-soft); }
+  .tabs .plate::after { content: ""; position: absolute; inset: 0; background: linear-gradient(105deg, transparent 30%, rgba(255,255,255,.45) 48%, transparent 62%);
+    transform: translateX(-120%); }
+  .tabs .plate.flash::after { animation: sweep .8s var(--out); }
+  @keyframes sweep { to { transform: translateX(120%); } }
+
+  /* ───────── Views ───────── */
+  main { position: absolute; inset: 0; perspective: 1600px; }
+  .view { position: absolute; inset: 0; padding: 104px 56px 56px; visibility: hidden; opacity: 0; pointer-events: none; }
+  .view.active { visibility: visible; opacity: 1; pointer-events: auto; animation: viewIn .7s var(--out) both; }
+  .view.leaving { visibility: visible; animation: viewOut .22s ease-in both; pointer-events: none; }
+  @keyframes viewIn { from { opacity: 0; transform: translateY(26px) rotateX(7deg) scale(.985); } to { opacity: 1; transform: none; } }
+  @keyframes viewOut { to { opacity: 0; transform: translateY(-12px) rotateX(-4deg) scale(.99); } }
+  .eyebrow { font: 600 11px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--bone-faint); }
+  h1 { margin: 0; font-weight: 600; letter-spacing: -.02em; line-height: 1.04; }
+
+  /* ───────── Dial ───────── */
+  #view-dial { display: grid; grid-template-columns: 1fr 520px; align-items: center; gap: 24px; padding-right: 40px; padding-left: 64px; }
+  .dial-copy { align-self: center; padding-bottom: 20px; }
+  .titleblock { min-height: 168px; margin-top: 18px; }
+  .dial-copy h1 { font-size: 58px; margin: 0 0 14px; }
+  .dial-copy h1 em { font-style: italic; color: var(--signal); }
+  .dial-copy .host { font: 14px var(--mono); color: var(--bone-dim); letter-spacing: .01em; min-height: 20px; }
+  .swap { animation: swap .5s var(--out) both; }
+  @keyframes swap { from { opacity: 0; transform: translateY(14px); filter: blur(4px); } to { opacity: 1; transform: none; filter: none; } }
+  .dial-actions { display: flex; gap: 10px; margin-top: 30px; min-height: 40px; }
+  .dial-foot { display: flex; align-items: center; gap: 14px; margin-top: 56px; color: var(--bone-faint); font-size: 14px; }
+  .keys { display: flex; gap: 6px; }
+  .key { display: inline-grid; place-items: center; min-width: 38px; height: 38px; padding: 0 10px; border-radius: 9px; font: 600 15px var(--mono); color: var(--bone);
+    background: linear-gradient(180deg, #3a2e24, #2a2119); box-shadow: 0 4px 0 #120d09, 0 6px 12px rgba(0,0,0,.4), inset 0 1px 0 rgba(240,229,205,.14);
+    transition: transform .12s, box-shadow .12s, color .15s; user-select: none; }
+  .key.down { transform: translateY(4px); box-shadow: 0 0 0 #120d09, 0 1px 3px rgba(0,0,0,.4), inset 0 1px 0 rgba(240,229,205,.06); color: var(--signal); }
+  .pager { display: flex; align-items: center; gap: 10px; margin-top: 18px; font: 12px var(--mono); color: var(--bone-faint); }
+  .pager .dots { display: flex; gap: 6px; }
+  .pager .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--rim-strong); transition: all .4s var(--spring); }
+  .pager .dots i.on { background: var(--signal); transform: scale(1.35); box-shadow: 0 0 10px rgba(217,123,70,.7); }
+  .pager button { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--hull); box-shadow: 0 0 0 1px var(--rim);
+    transition: transform .3s var(--spring), background .2s; }
+  .pager button:hover { background: var(--hull-lift); transform: scale(1.1); } .pager button:active { transform: scale(.92); }
+  .pager button:disabled { opacity: .3; pointer-events: none; }
+
+  /* Buttons */
+  .btn { position: relative; overflow: hidden; display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 10px; font-size: 15px; font-weight: 600;
+    background: var(--hull); box-shadow: 0 0 0 1px var(--rim), 0 2px 6px rgba(0,0,0,.3); transition: transform .3s var(--spring), background .2s, box-shadow .2s; }
+  .btn:hover { background: var(--hull-lift); transform: translateY(-2px); box-shadow: 0 0 0 1px var(--rim-strong), 0 8px 18px rgba(0,0,0,.4); }
+  .btn:active { transform: translateY(1px) scale(.96); }
+  .btn.signal { color: var(--signal-ink); background: linear-gradient(180deg, #e68c58, var(--signal)); box-shadow: 0 6px 18px rgba(217,123,70,.28), inset 0 1px 0 rgba(255,255,255,.35); }
+  .btn.signal:hover { box-shadow: 0 10px 28px rgba(217,123,70,.45), inset 0 1px 0 rgba(255,255,255,.4); background: linear-gradient(180deg, #ee9a68, #e07e48); }
+  .btn.danger:hover { color: var(--alarm); }
+  .btn[disabled] { opacity: .4; pointer-events: none; }
+  .btn svg, .ico svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .sheen::before { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .25s;
+    background: radial-gradient(160px circle at var(--px, 50%) var(--py, 50%), rgba(255,240,205,.28), transparent 60%); mix-blend-mode: soft-light; }
+  .sheen:hover::before { opacity: 1; }
+  .ripple-dot { position: absolute; border-radius: 50%; pointer-events: none; background: rgba(255,240,205,.5); transform: translate(-50%,-50%) scale(0); animation: ripple .65s var(--out) forwards; }
+  @keyframes ripple { to { transform: translate(-50%,-50%) scale(1); opacity: 0; } }
+
+  /* ───────── The 3D compass ───────── */
+  .cmp-wrap { position: relative; width: 520px; height: 520px; perspective: 1500px; }
+  .cmp { position: absolute; inset: 0; transform-style: preserve-3d; transform: rotateX(var(--rx, 14deg)) rotateY(var(--ry, 0deg)); will-change: transform; }
+  .cmp .l { position: absolute; left: 50%; top: 50%; border-radius: 50%; pointer-events: none; }
+  .l-shadow { width: 470px; height: 470px; margin: -235px 0 0 -235px; background: radial-gradient(circle, rgba(0,0,0,.75), rgba(0,0,0,0) 68%); filter: blur(14px);
+    transform: translate3d(var(--sx, 0px), calc(var(--sy, 0px) + 36px), -90px) scale(1.06); }
+  .l-case { width: 470px; height: 470px; margin: -235px 0 0 -235px;
+    background:
+      radial-gradient(circle, transparent 0 207px, rgba(0,0,0,.5) 208px, transparent 214px),
+      conic-gradient(from calc(var(--la, 30) * 1deg), #D5C08F, #856636 12%, #5A4325 24%, #B39257 38%, #E3D2A2 48%, #856636 60%, #4a381f 74%, #A98A52 88%, #D5C08F);
+    box-shadow: 0 0 0 1.5px #2F2717, inset 0 0 0 3px rgba(255,240,200,.25), inset 0 -8px 18px rgba(30,20,5,.55), inset 0 6px 10px rgba(255,235,185,.28); }
+  /* Knurled rim: a fine repeating conic reads as machined edge. */
+  .l-case::after { content: ""; position: absolute; inset: 0; border-radius: 50%; opacity: .5; mix-blend-mode: multiply;
+    background: repeating-conic-gradient(rgba(0,0,0,.35) 0 .5deg, transparent .5deg 2.5deg);
+    -webkit-mask: radial-gradient(circle, transparent 0 222px, #000 223px); mask: radial-gradient(circle, transparent 0 222px, #000 223px); }
+  .l-bezel { width: 424px; height: 424px; margin: -212px 0 0 -212px; transform: translateZ(6px);
+    background: radial-gradient(circle, transparent 0 201px, rgba(20,12,4,.8) 206px, rgba(255,235,185,.35) 210px, transparent 212px);
+    box-shadow: inset 0 0 22px rgba(0,0,0,.55); }
+  svg.l { width: 520px; height: 520px; margin: -260px 0 0 -260px; overflow: visible; }
+  .l-card { pointer-events: auto !important; transform: translateZ(12px); }
+  .l-needle { transform: translateZ(34px); } .l-hub { transform: translateZ(46px); }
+  .l-hub { width: 78px; height: 78px; margin: -39px 0 0 -39px; display: grid; place-items: center;
+    background: radial-gradient(circle at 35% 30%, #E3D2A2, #B39257 35%, #856636 65%, #4a381f);
+    box-shadow: 0 8px 14px rgba(0,0,0,.55), 0 0 0 1.5px #2F2717, inset 0 -3px 5px rgba(30,20,5,.5), inset 0 2px 3px rgba(255,240,200,.5); }
+  .l-hub b { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font: 700 20px var(--mono); color: #EDE0BF;
+    background: radial-gradient(circle at 50% 30%, #3b2b1a, #2e2113); box-shadow: inset 0 2px 5px rgba(0,0,0,.7), 0 0 0 1.5px rgba(255,235,185,.4); }
+  .l-glass { width: 424px; height: 424px; margin: -212px 0 0 -212px; transform: translateZ(60px); mix-blend-mode: screen;
+    background: radial-gradient(circle at var(--gx, 34%) var(--gy, 24%), rgba(255,244,220,.30), rgba(255,244,220,.06) 34%, transparent 58%),
+                linear-gradient(135deg, rgba(255,255,255,.10), transparent 40%); }
+  .l-lid { width: 470px; height: 470px; margin: -235px 0 0 -235px; transform-origin: 50% 0%; transform: translateZ(80px); z-index: 5;
+    background: conic-gradient(from 40deg, #B39257, #856636 18%, #D5C08F 34%, #6a5129 52%, #B39257 70%, #E3D2A2 82%, #B39257);
+    box-shadow: inset 0 0 0 6px rgba(255,240,200,.22), inset 0 0 40px rgba(30,20,5,.5), 0 20px 40px rgba(0,0,0,.55); }
+  .l-lid::before { content: ""; position: absolute; inset: 36px; border-radius: 50%; box-shadow: inset 0 0 0 2px rgba(47,39,23,.55), 0 0 0 1px rgba(255,240,200,.25);
+    background: repeating-conic-gradient(rgba(47,39,23,.25) 0 1deg, transparent 1deg 10deg); }
+  .l-lid::after { content: ""; position: absolute; inset: 120px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #D5C08F, #856636 70%); box-shadow: inset 0 0 0 2px rgba(47,39,23,.6); }
+  .l-lid.gone { display: none; }
+  .l-lid.open { animation: lid 1.25s cubic-bezier(.5, 0, .2, 1) .15s forwards; }
+  @keyframes lid { 0% { transform: translateZ(80px) rotateX(0); opacity: 1; } 78% { opacity: 1; } 100% { transform: translateZ(80px) rotateX(-118deg); opacity: 0; visibility: hidden; } }
+
+  .wedge { cursor: pointer; transform-box: fill-box; transform-origin: center; transition: transform .45s var(--spring), filter .3s;
+    transform: translate(0,0) scale(1); }
+  .wedge path { fill: rgba(51,38,26,.07); stroke: rgba(51,38,26,.30); stroke-width: 1; transition: fill .3s, stroke .3s; }
+  .wedge:hover { transform: translate(calc(var(--dx) * 1px), calc(var(--dy) * 1px)) scale(1.035); filter: drop-shadow(0 6px 5px rgba(40,25,10,.4)); }
+  .wedge:hover path, .wedge.aimed path { fill: rgba(143,50,34,.20); stroke: rgba(143,50,34,.95); stroke-width: 1.4; }
+  .wedge.aimed path { fill: rgba(143,50,34,.26); }
+  .wedge .num { font: 700 12px var(--mono); fill: var(--ink-subtle); } .wedge .name { font: 600 13.5px var(--serif); fill: var(--ink); }
+  .wedge:hover .num, .wedge.aimed .num { fill: var(--vermilion); }
+  .wedge.empty path { stroke-dasharray: 4 5; fill: transparent; }
+  .wedge.empty .plus { opacity: .45; transition: opacity .3s, transform .4s var(--spring); transform-box: fill-box; transform-origin: center; }
+  .wedge.empty:hover .plus { opacity: 1; transform: rotate(90deg) scale(1.2); }
+  .wedge.dropin { animation: dropin .85s var(--spring) both; }
+  @keyframes dropin { 0% { transform: translateY(-34px) scale(1.25); opacity: 0; filter: drop-shadow(0 24px 12px rgba(0,0,0,.5)); } 60% { opacity: 1; } 100% { transform: none; filter: none; } }
+  .wedge.dragging { opacity: .35; }
+  .wedge.dragover path { fill: rgba(217,123,70,.35); stroke: var(--vermilion-lit); stroke-width: 2; }
+  .cmp-wrap.mini .wedge { cursor: default; pointer-events: none; }
+
+  /* ───────── Library ───────── */
+  .lib-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 26px; }
+  .lib-head h1 { font-size: 46px; margin-top: 10px; }
+  .search { position: relative; display: flex; align-items: center; gap: 10px; width: 290px; height: 44px; padding: 0 14px; border-radius: 12px; background: var(--hull);
+    box-shadow: 0 0 0 1px var(--rim); transition: width .5s var(--spring-soft), box-shadow .25s, background .25s; }
+  .search:focus-within { width: 360px; background: var(--hull-lift); box-shadow: 0 0 0 1.5px var(--signal), 0 0 24px rgba(217,123,70,.2); }
+  .search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font-size: 16px; }
+  .search svg { width: 17px; height: 17px; stroke: var(--bone-dim); fill: none; stroke-width: 1.8; stroke-linecap: round; }
+  .list { height: 470px; overflow-y: auto; margin: 0 -56px; padding: 6px 56px 40px; scrollbar-width: none;
+    -webkit-mask: linear-gradient(transparent, #000 14px, #000 calc(100% - 34px), transparent); mask: linear-gradient(transparent, #000 14px, #000 calc(100% - 34px), transparent); }
+  .list::-webkit-scrollbar { display: none; }
+  .divider { display: flex; align-items: center; gap: 14px; margin: 22px 0 10px; font: 600 11px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--bone-faint); }
+  .divider:first-child { margin-top: 4px; } .divider::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--rim-strong), transparent); }
+  .row { position: relative; display: flex; align-items: center; gap: 20px; height: 68px; padding: 0 18px 0 14px; margin-bottom: 6px; border-radius: 16px;
+    background: transparent; transition: transform .4s var(--spring), background .25s, box-shadow .3s; }
+  .row::before { content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px; border-radius: 3px; background: var(--signal); transform: scaleY(0); transition: transform .4s var(--spring); }
+  .row:hover { transform: translateY(-2px) scale(1.006); background: linear-gradient(90deg, rgba(217,123,70,.12), rgba(42,33,26,.85) 40%); box-shadow: 0 14px 30px rgba(0,0,0,.4), 0 0 0 1px var(--rim); }
+  .row:hover::before { transform: scaleY(1); }
+  .row.dragging { opacity: .35; } .row.removing { opacity: 0; transform: translateX(40px) scale(.96); transition: all .35s ease-in; }
+  .slot { position: relative; width: 38px; height: 38px; flex: none; display: grid; place-items: center; font: 600 12px var(--mono); color: var(--bone-dim); }
+  .slot svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .row:hover .slot { color: var(--bone); }
+  .mono-tile { width: 42px; height: 42px; flex: none; border-radius: 12px; display: grid; place-items: center; font: 700 20px var(--serif); color: var(--signal-ink);
+    background: linear-gradient(145deg, var(--brass-hi), var(--brass-lit) 55%, var(--brass-mid)); box-shadow: inset 0 1px 0 rgba(255,245,215,.6), inset 0 -2px 4px rgba(60,40,10,.4), 0 3px 8px rgba(0,0,0,.4);
+    transition: transform .45s var(--spring); }
+  .row:hover .mono-tile { transform: rotate(-6deg) scale(1.08); }
+  .row .t { flex: 1; min-width: 0; } .row .t b { display: block; font-size: 19px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .t span { display: block; margin-top: 3px; font: 12.5px var(--mono); color: var(--bone-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .acts { display: flex; gap: 4px; opacity: 0; transform: translateX(10px); transition: opacity .2s, transform .35s var(--spring); }
+  .row:hover .acts, .row:focus-within .acts { opacity: 1; transform: none; }
+  .ico { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; color: var(--bone-dim); transition: background .2s, color .2s, transform .3s var(--spring); }
+  .ico:hover { background: rgba(240,229,205,.10); color: var(--bone); transform: scale(1.12); } .ico:active { transform: scale(.88); }
+  .grip { color: var(--bone-faint); opacity: 0; cursor: grab; transition: opacity .2s; } .row:hover .grip { opacity: .7; }
+  .menu { position: absolute; right: 12px; top: 52px; z-index: 40; min-width: 190px; padding: 6px; border-radius: 12px; background: #241c16;
+    box-shadow: 0 0 0 1px var(--rim-strong), 0 20px 50px rgba(0,0,0,.6); animation: pop .35s var(--spring) both; transform-origin: top right; }
+  .menu button { display: block; width: 100%; text-align: left; padding: 9px 12px; border-radius: 8px; font-size: 15px; transition: background .15s; }
+  .menu button:hover { background: rgba(240,229,205,.10); } .menu .danger { color: var(--alarm); }
+  @keyframes pop { from { opacity: 0; transform: scale(.88) translateY(-6px); } to { opacity: 1; transform: none; } }
+
+  /* ───────── Import ───────── */
+  #view-import { display: grid; place-items: center; text-align: center; padding-top: 92px; }
+  .imp { width: 520px; }
+  .lock { width: 120px; height: 120px; margin: 0 auto 22px; position: relative; filter: drop-shadow(0 16px 20px rgba(0,0,0,.5)); }
+  .lock svg { width: 100%; height: 100%; overflow: visible; }
+  .lock .shackle { transform-box: fill-box; transform-origin: 0% 100%; transition: transform .8s var(--spring); }
+  .lock.open .shackle { transform: translateY(-4px) rotate(-26deg); }
+  .lock .tick { stroke-dasharray: 40; stroke-dashoffset: 40; transition: stroke-dashoffset .6s .35s var(--out); } .lock.open .tick { stroke-dashoffset: 0; }
+  .imp h1 { font-size: 40px; margin-bottom: 14px; } .imp p { margin: 0 auto 26px; max-width: 430px; font-size: 17px; line-height: 1.55; color: var(--bone-dim); }
+  .imp .row-btns { display: flex; gap: 12px; justify-content: center; }
+  .stats { display: flex; justify-content: center; gap: 14px; margin: 26px 0 22px; }
+  .stat { width: 150px; padding: 18px 10px 14px; border-radius: 16px; background: var(--hull); box-shadow: 0 0 0 1px var(--rim); animation: pop .6s var(--spring) both; }
+  .stat:nth-child(2) { animation-delay: .08s; } .stat:nth-child(3) { animation-delay: .16s; }
+  .stat b { display: block; font-size: 40px; line-height: 1; font-weight: 600; } .stat.new b { color: var(--signal); } .stat span { display: block; margin-top: 8px; font: 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--bone-faint); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 0 auto 26px; max-width: 480px; }
+  .chip { padding: 6px 12px; border-radius: 999px; font-size: 14px; background: rgba(217,123,70,.12); box-shadow: 0 0 0 1px rgba(217,123,70,.35); animation: pop .5s var(--spring) both; }
+  .ring { width: 150px; height: 150px; margin: 0 auto 18px; } .ring svg { width: 100%; height: 100%; overflow: visible; }
+  .ring circle.p { fill: var(--rim-strong); transition: fill .3s, r .5s var(--spring); } .ring circle.p.on { fill: var(--signal); r: 7; filter: drop-shadow(0 0 6px rgba(217,123,70,.9)); }
+  .counter { font: 600 44px var(--mono); font-variant-numeric: tabular-nums; margin-bottom: 8px; }
+
+  /* ───────── Settings ───────── */
+  #view-settings { display: grid; grid-template-columns: 1fr 340px; gap: 44px; padding-top: 100px; }
+  .set-scroll { overflow-y: auto; margin-right: -20px; padding: 4px 20px 40px 0; scrollbar-width: none;
+    -webkit-mask: linear-gradient(transparent, #000 12px, #000 calc(100% - 30px), transparent); mask: linear-gradient(transparent, #000 12px, #000 calc(100% - 30px), transparent); }
+  .set-scroll::-webkit-scrollbar { display: none; }
+  .set-scroll h1 { font-size: 46px; margin: 10px 0 26px; }
+  .card { padding: 22px 24px; margin-bottom: 14px; border-radius: 18px; background: linear-gradient(180deg, rgba(42,33,26,.9), rgba(36,28,22,.9)); box-shadow: 0 0 0 1px var(--rim); }
+  .card h3 { margin: 0 0 16px; font: 600 11px var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--bone-faint); }
+  .line { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 40px; font-size: 17px; }
+  .line + .line { margin-top: 6px; } .line small { display: block; margin-top: 3px; font-size: 13.5px; color: var(--bone-dim); }
+  .seg { display: flex; padding: 3px; border-radius: 11px; background: #1a1410; box-shadow: inset 0 1px 3px rgba(0,0,0,.5), 0 0 0 1px var(--rim); position: relative; }
+  .seg button { position: relative; z-index: 1; padding: 7px 14px; border-radius: 8px; font-size: 14.5px; color: var(--bone-dim); transition: color .25s; }
+  .seg button.on { color: var(--signal-ink); font-weight: 600; }
+  .seg i { position: absolute; z-index: 0; top: 3px; bottom: 3px; border-radius: 8px; background: linear-gradient(180deg, var(--brass-hi), var(--brass-lit));
+    box-shadow: 0 2px 6px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,245,215,.5); transition: left .5s var(--spring-soft), width .5s var(--spring-soft); }
+  .tog { position: relative; width: 52px; height: 30px; border-radius: 999px; flex: none; background: #1a1410; box-shadow: inset 0 1px 4px rgba(0,0,0,.6), 0 0 0 1px var(--rim); transition: background .3s; }
+  .tog::after { content: ""; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; transition: transform .5s var(--spring), background .3s;
+    background: radial-gradient(circle at 35% 30%, #cdb98d, #8a7344); box-shadow: 0 2px 5px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,245,215,.5); }
+  .tog.on { background: rgba(217,123,70,.35); box-shadow: inset 0 1px 4px rgba(0,0,0,.4), 0 0 0 1px rgba(217,123,70,.6), 0 0 18px rgba(217,123,70,.25); }
+  .tog.on::after { transform: translateX(22px); background: radial-gradient(circle at 35% 30%, #f1d6a9, #d99a5c); }
+  .recorder { min-width: 120px; height: 42px; padding: 0 14px; border-radius: 11px; display: flex; gap: 6px; align-items: center; justify-content: center; font: 600 15px var(--mono);
+    background: #1a1410; box-shadow: inset 0 1px 3px rgba(0,0,0,.5), 0 0 0 1px var(--rim); transition: box-shadow .25s, transform .3s var(--spring); }
+  .recorder:hover { transform: scale(1.04); } .recorder.rec { box-shadow: 0 0 0 1.5px var(--signal), 0 0 22px rgba(217,123,70,.35); color: var(--signal); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 1.5px var(--signal), 0 0 36px rgba(217,123,70,.55); } }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 220px; height: 6px; border-radius: 6px; outline: 0;
+    background: linear-gradient(90deg, var(--signal) var(--v, 50%), #1a1410 var(--v, 50%)); box-shadow: inset 0 1px 2px rgba(0,0,0,.6), 0 0 0 1px var(--rim); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%; cursor: grab; transition: transform .25s var(--spring);
+    background: radial-gradient(circle at 35% 30%, #E3D2A2, #B39257 55%, #856636); box-shadow: 0 3px 8px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,245,215,.6); }
+  input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); } input[type=range]:active::-webkit-slider-thumb { transform: scale(.92); cursor: grabbing; }
+  .preview { position: sticky; top: 0; align-self: start; display: grid; place-items: center; height: 480px; }
+  .preview .cmp-wrap { transform: scale(var(--scale, .6)); transition: transform .5s var(--spring-soft); }
+  .preview .cap { position: absolute; bottom: 120px; font: 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--bone-faint); }
+
+  /* ───────── Composer (morphing FAB) ───────── */
+  .fab { position: absolute; z-index: 35; right: 40px; bottom: 36px; width: 60px; height: 60px; border-radius: 30px; overflow: hidden; color: var(--signal-ink);
+    background: linear-gradient(180deg, #ee9a68, var(--signal)); box-shadow: 0 12px 30px rgba(217,123,70,.38), 0 0 0 1px rgba(255,200,150,.3), inset 0 1px 0 rgba(255,255,255,.4);
+    transition: width .6s var(--spring-soft), height .6s var(--spring-soft), border-radius .6s var(--spring-soft), background .4s, box-shadow .4s, transform .3s var(--spring); }
+  .fab:not(.open):hover { transform: scale(1.1) rotate(4deg); box-shadow: 0 16px 40px rgba(217,123,70,.55), inset 0 1px 0 rgba(255,255,255,.4); }
+  .fab:not(.open):active { transform: scale(.93); }
+  .fab .plus { position: absolute; left: 0; top: 0; width: 60px; height: 60px; display: grid; place-items: center; transition: transform .6s var(--spring); }
+  .fab .plus svg { width: 26px; height: 26px; stroke: currentColor; stroke-width: 2.4; fill: none; stroke-linecap: round; }
+  .fab.open { width: 700px; height: 84px; border-radius: 24px; background: #2b2119; color: var(--bone); cursor: default; box-shadow: 0 30px 80px rgba(0,0,0,.7), 0 0 0 1px var(--rim-strong); }
+  .fab.open .plus { transform: rotate(135deg); cursor: pointer; }
+  .fab .form { position: absolute; left: 66px; right: 14px; top: 0; bottom: 0; display: flex; align-items: center; gap: 10px; opacity: 0; transform: translateX(16px); pointer-events: none; transition: opacity .2s, transform .3s; }
+  .fab.open .form { opacity: 1; transform: none; pointer-events: auto; transition: opacity .4s .22s, transform .5s .22s var(--spring-soft); }
+  .fab .form input { height: 46px; padding: 0 14px; border-radius: 12px; border: 0; outline: 0; font-size: 16px; background: #1a1410; box-shadow: inset 0 1px 3px rgba(0,0,0,.5), 0 0 0 1px var(--rim); transition: box-shadow .25s; }
+  .fab .form input:focus { box-shadow: 0 0 0 1.5px var(--signal), 0 0 18px rgba(217,123,70,.25); }
+  .fab .form .nm { width: 150px; } .fab .form .ln { flex: 1; min-width: 0; font-family: var(--mono); font-size: 14px; }
+  .fab .err { position: absolute; left: 70px; bottom: 4px; font-size: 12.5px; color: var(--alarm); }
+  .clip { position: absolute; z-index: 34; right: 44px; bottom: 134px; padding: 9px 16px; border-radius: 999px; font-size: 15px; background: #2b2119; box-shadow: 0 0 0 1px rgba(217,123,70,.5), 0 14px 30px rgba(0,0,0,.5);
+    opacity: 0; transform: translateY(14px) scale(.9); pointer-events: none; transition: all .5s var(--spring); }
+  .clip.show { opacity: 1; transform: none; pointer-events: auto; transition-delay: .3s; } .clip:hover { background: #352a21; }
+  .clip em { font: 13px var(--mono); color: var(--signal); font-style: normal; }
+  .toast { position: absolute; z-index: 60; left: 50%; bottom: 40px; transform: translate(-50%, 30px) scale(.9); padding: 12px 22px; border-radius: 14px; font-size: 16px; background: #2b2119;
+    box-shadow: 0 0 0 1px var(--rim-strong), 0 20px 50px rgba(0,0,0,.6); opacity: 0; pointer-events: none; transition: all .5s var(--spring); display: flex; gap: 10px; align-items: center; }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); } .toast i { color: var(--mint); font-style: normal; }
+
+  /* ───────── Modal + palette ───────── */
+  .scrim { position: absolute; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(8,5,3,.62); backdrop-filter: blur(6px); opacity: 0; pointer-events: none; transition: opacity .3s; }
+  .scrim.show { opacity: 1; pointer-events: auto; } .scrim.pal { place-items: start center; padding-top: 140px; }
+  .sheet { width: 440px; padding: 28px; border-radius: 22px; background: #241c16; box-shadow: 0 0 0 1px var(--rim-strong), 0 40px 100px rgba(0,0,0,.7); transform: scale(.9) translateY(14px); transition: transform .55s var(--spring); }
+  .scrim.show .sheet { transform: none; } .sheet h2 { margin: 0 0 20px; font-size: 26px; }
+  .sheet label { display: block; margin: 0 0 14px; font: 11px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--bone-faint); }
+  .sheet input { display: block; width: 100%; margin-top: 8px; height: 46px; padding: 0 14px; border-radius: 12px; border: 0; outline: 0; font: 16px var(--serif); text-transform: none; letter-spacing: 0; color: var(--bone);
+    background: #1a1410; box-shadow: inset 0 1px 3px rgba(0,0,0,.5), 0 0 0 1px var(--rim); } .sheet input:focus { box-shadow: 0 0 0 1.5px var(--signal); }
+  .sheet .btns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+  .palette { width: 560px; border-radius: 20px; background: #241c16; box-shadow: 0 0 0 1px var(--rim-strong), 0 40px 100px rgba(0,0,0,.7); overflow: hidden; transform: scale(.94) translateY(-10px); transition: transform .5s var(--spring); }
+  .scrim.show .palette { transform: none; }
+  .palette input { width: 100%; height: 62px; padding: 0 24px; border: 0; outline: 0; background: none; font-size: 20px; border-bottom: 1px solid var(--rim); }
+  .palette ul { list-style: none; margin: 0; padding: 8px; max-height: 330px; overflow: auto; }
+  .palette li { display: flex; justify-content: space-between; padding: 11px 16px; border-radius: 10px; font-size: 17px; transition: background .12s; } .palette li small { font: 12px var(--mono); color: var(--bone-faint); align-self: center; }
+  .palette li.sel { background: rgba(217,123,70,.18); box-shadow: inset 3px 0 0 var(--signal); }
+
+  /* ───────── Empty-state helper & reduced motion ───────── */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-delay: 0s !important; transition-duration: .01ms !important; transition-delay: 0s !important; }
+    .l-lid { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="stage"><div class="scaler" id="scaler">
+<div class="window" id="win">
+  <div class="spot"></div>
+  <div class="titlebar"><i></i><i></i><i></i></div>
+
+  <nav class="tabs" id="tabs" role="tablist" aria-label="Sections">
+    <span class="plate" id="plate"></span>
+    <button role="tab" data-tab="dial">Dial</button>
+    <button role="tab" data-tab="library">Library</button>
+    <button role="tab" data-tab="import">Import</button>
+    <button role="tab" data-tab="settings">Settings</button>
+  </nav>
+
+  <main>
+    <section class="view" id="view-dial">
+      <div class="dial-copy">
+        <div class="eyebrow" id="dial-eyebrow"></div>
+        <div class="titleblock"><h1 id="dial-title"></h1><div class="host" id="dial-host"></div></div>
+        <div class="dial-actions" id="dial-actions"></div>
+        <div class="dial-foot">
+          <div class="keys" id="hotkey"><span class="key">⌘</span><span class="key">E</span></div>
+          <span>opens the dial, anywhere</span>
+        </div>
+        <div class="pager" id="pager"></div>
+      </div>
+      <div class="cmp-wrap" id="cmp-main"></div>
+    </section>
+
+    <section class="view" id="view-library">
+      <div class="lib-head">
+        <div><div class="eyebrow" id="lib-eyebrow"></div><h1>Library</h1></div>
+        <label class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="q" placeholder="Find a slot" autocomplete="off"></label>
+      </div>
+      <div class="list" id="list"></div>
+    </section>
+
+    <section class="view" id="view-import"><div class="imp" id="imp"></div></section>
+
+    <section class="view" id="view-settings">
+      <div class="set-scroll" id="settings"></div>
+      <div class="preview"><div class="cmp-wrap mini" id="cmp-prev"></div><div class="cap">Live preview</div></div>
+    </section>
+  </main>
+
+  <div class="clip" id="clip">Add <em>docs.swift.org</em> from clipboard?</div>
+  <div class="fab" id="fab" aria-label="Add bookmark">
+    <div class="plus" id="fab-plus"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></div>
+    <form class="form" id="compose" autocomplete="off">
+      <input class="nm" id="c-name" placeholder="Name (optional)">
+      <input class="ln" id="c-url" placeholder="paste a link, or type a domain">
+      <button class="btn signal" type="submit">Add bookmark</button>
+    </form>
+    <div class="err" id="c-err"></div>
+  </div>
+
+  <div class="scrim" id="edit"><form class="sheet" id="edit-form">
+    <h2>Edit slot</h2>
+    <label>Name<input id="e-name"></label><label>Link<input id="e-url"></label>
+    <div class="btns"><button class="btn" type="button" id="e-cancel">Cancel</button><button class="btn signal sheen" type="submit">Save</button></div>
+  </form></div>
+
+  <div class="scrim pal" id="pal"><div class="palette"><input id="pal-q" placeholder="Jump to a bookmark or a section…" autocomplete="off"><ul id="pal-list"></ul></div></div>
+  <div class="toast" id="toast"></div>
+</div>
+</div></div>
+<div class="note">Phase 0 prototype · hover, drag wedges, press 1–9 ←/→, ⌘E ⌘K ⌘N ⌘, · R resets the demo · L replays the lid</div>
+
+<script>
+(() => {
+'use strict';
+const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const Q = new URLSearchParams(location.search);
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const PER_PAGE = 9, TAU = Math.PI * 2;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/* ───────── State ───────── */
+const SEED = [['Github', 'github.com'], ['Opencode', 'opencode.ai'], ['reddit', 'reddit.com'], ['icloud mail', 'icloud.com'], ['Openhands', '100.124.57.17'],
+  ['Artificial Analysis', 'artificialanalysis.ai'], ['TradeMe', 'trademe.co.nz'], ['Music', 'music.youtube.com']];
+const IMPORTABLE = [['Hacker News', 'news.ycombinator.com'], ['Swift.org', 'swift.org'], ['Are.na', 'are.na'], ['Linear', 'linear.app'], ['Figma', 'figma.com'], ['Pinboard', 'pinboard.in']];
+let uid = 1;
+const mk = (t, u) => ({ id: uid++, title: t, url: u });
+const S = { items: [], aimed: 0, tab: 'dial', q: '', imp: 'locked', impCount: 0, settings: { openIn: 1, background: false, radius: 200, numbers: true, login: false, sync: true, hotkey: ['⌘', 'E'] } };
+const reset = () => { uid = 1; S.items = SEED.map(([t, u]) => mk(t, u)); S.aimed = 0; S.imp = 'locked'; S.q = ''; };
+reset();
+const hostOf = u => u.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+const pageOf = i => Math.floor(i / PER_PAGE);
+const pageCount = () => Math.max(1, Math.ceil(S.items.length / PER_PAGE));
+const wordsNum = n => ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen'][n] || n;
+
+/* ───────── Window scaling + pointer light ───────── */
+const scaler = $('#scaler'), win = $('#win');
+const fit = () => { const s = Math.min(innerWidth / 1100, (innerHeight - 30) / 790, 1.15); scaler.style.transform = `scale(${s})`; };
+addEventListener('resize', fit); fit();
+const pointer = { x: 0.5, y: 0.3, inside: false };
+addEventListener('pointermove', e => {
+  const r = win.getBoundingClientRect();
+  pointer.x = (e.clientX - r.left) / r.width; pointer.y = (e.clientY - r.top) / r.height; pointer.inside = true;
+  win.style.setProperty('--mx', pointer.x * 100 + '%'); win.style.setProperty('--my', pointer.y * 100 + '%');
+  const sh = e.target.closest && e.target.closest('.sheen');
+  if (sh) { const b = sh.getBoundingClientRect(); sh.style.setProperty('--px', (e.clientX - b.left) / b.width * 100 + '%'); sh.style.setProperty('--py', (e.clientY - b.top) / b.height * 100 + '%'); }
+});
+document.addEventListener('pointerleave', () => { pointer.inside = false; });
+document.addEventListener('pointerdown', e => {
+  const t = e.target.closest && e.target.closest('.btn, .fab:not(.open), .tabs button');
+  if (!t || REDUCED) return;
+  const b = t.getBoundingClientRect(), s = b.width / t.offsetWidth || 1, d = document.createElement('span');
+  const size = Math.max(t.offsetWidth, t.offsetHeight) * 2.4;
+  d.className = 'ripple-dot'; d.style.cssText = `left:${(e.clientX - b.left) / s}px;top:${(e.clientY - b.top) / s}px;width:${size}px;height:${size}px`;
+  if (getComputedStyle(t).position === 'static') t.style.position = 'relative';
+  t.style.overflow = 'hidden'; t.appendChild(d); setTimeout(() => d.remove(), 700);
+});
+
+/* ───────── Toast ───────── */
+let toastT; const toast = (html) => { const t = $('#toast'); t.innerHTML = html; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2300); };
+
+/* ───────── FLIP helper ───────── */
+function flip(container, sel, mutate) {
+  const first = new Map($$(sel, container).map(el => [el.dataset.id, el.getBoundingClientRect()]));
+  mutate();
+  if (REDUCED) return;
+  $$(sel, container).forEach(el => {
+    const a = first.get(el.dataset.id); if (!a) return;
+    const b = el.getBoundingClientRect(), s = b.width / el.offsetWidth || 1, dy = (a.top - b.top) / s;
+    if (Math.abs(dy) < 1) return;
+    el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 520, easing: 'cubic-bezier(.34,1.3,.64,1)' });
+  });
+}
+
+/* ───────── Compass ───────── */
+const NS = 'http://www.w3.org/2000/svg';
+const polar = (r, a) => [r * Math.sin(a), -r * Math.cos(a)];
+function sector(i, n, r0, r1, gap) {
+  const step = TAU / n, a0 = i * step - step / 2 + gap, a1 = i * step + step / 2 - gap;
+  const [x0, y0] = polar(r1, a0), [x1, y1] = polar(r1, a1), [x2, y2] = polar(r0, a1), [x3, y3] = polar(r0, a0);
+  const f = v => v.toFixed(2);
+  return `M${f(x0)} ${f(y0)}A${r1} ${r1} 0 0 1 ${f(x1)} ${f(y1)}L${f(x2)} ${f(y2)}A${r0} ${r0} 0 0 0 ${f(x3)} ${f(y3)}Z`;
+}
+const trunc = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
+
+class Compass {
+  constructor(el, { interactive = true, amp = 1 } = {}) {
+    this.el = el; this.interactive = interactive; this.amp = amp;
+    this.st = { rx: 14, ry: 0, vrx: 0, vry: 0, tx: 14, ty: 0, na: 0, nv: 0, nt: 0, t: Math.random() * 10 };
+    this.showNumbers = true; this.page = 0; this.dropId = null;
+    let ticks = ''; for (let i = 0; i < 120; i++) { const a = i / 120 * TAU, major = i % 10 === 0; const [x0, y0] = polar(major ? 183 : 187, a), [x1, y1] = polar(194, a);
+      ticks += `<line x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}" stroke="rgba(58,44,26,${major ? .75 : .4})" stroke-width="${major ? 1.6 : 1}"/>`; }
+    el.innerHTML = `<div class="cmp">
+      <div class="l l-shadow"></div><div class="l l-case"></div><div class="l l-bezel"></div>
+      <svg class="l l-card" viewBox="-260 -260 520 520"><defs>
+        <radialGradient id="pp${Compass.n}" cx="42%" cy="36%" r="75%"><stop offset="0" stop-color="#E0D1B1"/><stop offset=".62" stop-color="#DCCDAA"/><stop offset="1" stop-color="#BDA87E"/></radialGradient>
+        <clipPath id="cc${Compass.n}"><circle r="205"/></clipPath><filter id="gr${Compass.n}" x="-50%" y="-50%" width="200%" height="200%"><feTurbulence type="fractalNoise" baseFrequency=".8" numOctaves="2" seed="7"/><feColorMatrix values="0 0 0 0 .3  0 0 0 0 .22  0 0 0 0 .1  0 0 0 .5 0"/></filter></defs>
+        <circle r="205" fill="url(#pp${Compass.n})"/><circle r="205" filter="url(#gr${Compass.n})" opacity=".55" clip-path="url(#cc${Compass.n})"/>
+        <circle r="205" fill="none" stroke="rgba(135,112,74,.9)" stroke-width="2"/><circle r="198" fill="none" stroke="rgba(58,44,26,.5)" stroke-width="1"/>
+        ${ticks}<circle r="178" fill="none" stroke="rgba(58,44,26,.35)" stroke-width="1"/>
+        <g class="wedges"></g></svg>
+      <svg class="l l-needle" viewBox="-260 -260 520 520"><g class="needle"><ellipse cx="6" cy="10" rx="9" ry="120" fill="rgba(0,0,0,.28)" style="filter:blur(5px)"/>
+        <path d="M0 -158 L9 6 L-9 6Z" fill="#8F3222"/><path d="M0 -158 L9 6 L0 2Z" fill="#B4452E"/>
+        <path d="M0 62 L9 6 L-9 6Z" fill="#33261A"/><path d="M0 62 L9 6 L0 2Z" fill="#493B28"/></g></svg>
+      <div class="l l-hub"><b>·</b></div><div class="l l-glass"></div>${interactive ? '<div class="l l-lid"></div>' : ''}</div>`;
+    Compass.n++;
+    this.cmp = $('.cmp', el); this.wedges = $('.wedges', el); this.needle = $('.needle', el); this.hub = $('.l-hub b', el);
+    if (interactive) this.bind();
+    Compass.all.push(this);
+  }
+  bind() {
+    this.wedges.addEventListener('pointermove', e => { const w = e.target.closest('.wedge'); if (w && !this.drag) this.aimAt(+w.dataset.i); });
+  }
+  aimAt(i) { if (i === S.aimed) return; S.aimed = i; if (pageOf(i) !== this.page) { this.page = pageOf(i); this.draw(); } this.mark(); this.onAim && this.onAim(); }
+  mark() {
+    const local = S.aimed - this.page * PER_PAGE, hasItem = S.items[S.aimed];
+    $$('.wedge', this.el).forEach(w => w.classList.toggle('aimed', +w.dataset.i === S.aimed && !!hasItem));
+    this.hub.textContent = hasItem ? S.aimed + 1 : '·';
+    this.setNeedle(((local % PER_PAGE) + PER_PAGE) % PER_PAGE / PER_PAGE * 360);
+  }
+  setNeedle(deg) { const cur = this.st.na; let d = ((deg - cur) % 360 + 540) % 360 - 180; this.st.nt = cur + d; if (REDUCED) this.st.na = this.st.nt; }
+  draw() {
+    const frag = []; const base = this.page * PER_PAGE;
+    for (let k = 0; k < PER_PAGE; k++) {
+      const gi = base + k, it = S.items[gi], mid = k / PER_PAGE * TAU, [dx, dy] = polar(7, mid);
+      const [nx, ny] = polar(162, mid), [tx, ty] = polar(124, mid), path = sector(k, PER_PAGE, 50, 176, .045);
+      frag.push(it
+        ? `<g class="wedge ${this.dropId === it.id ? 'dropin' : ''}" data-i="${gi}" data-id="${it.id}" style="--dx:${dx.toFixed(1)};--dy:${dy.toFixed(1)}"><path d="${path}"/>
+            ${this.showNumbers ? `<text class="num" x="${nx.toFixed(1)}" y="${(ny + 4).toFixed(1)}" text-anchor="middle">${gi + 1}</text>` : ''}
+            <text class="name" x="${tx.toFixed(1)}" y="${(ty + 5).toFixed(1)}" text-anchor="middle">${esc(trunc(it.title, 9))}</text></g>`
+        : `<g class="wedge empty" data-i="${gi}" style="--dx:${dx.toFixed(1)};--dy:${dy.toFixed(1)}"><path d="${path}"/>
+            <g class="plus" transform="translate(${tx.toFixed(1)} ${ty.toFixed(1)})"><path d="M-9 0H9M0 -9V9" stroke="#33261A" stroke-width="2" stroke-linecap="round"/></g></g>`);
+    }
+    this.wedges.innerHTML = frag.join(''); this.dropId = null; this.mark();
+  }
+  setPage(p) { this.page = p; this.draw(); }
+  step(dt, now) {
+    const s = this.st, a = this.amp;
+    if (this.interactive || true) {
+      const r = this.el.getBoundingClientRect(); const wr = win.getBoundingClientRect();
+      if (pointer.inside && r.width) {
+        const nx = clamp((pointer.x * wr.width + wr.left - (r.left + r.width / 2)) / (wr.width * .55), -1, 1), ny = clamp((pointer.y * wr.height + wr.top - (r.top + r.height / 2)) / (wr.height * .55), -1, 1);
+        s.tx = 14 - ny * 11 * a; s.ty = nx * 15 * a; this.light = { nx, ny };
+      } else { s.tx = 14; s.ty = 0; this.light = { nx: -.3, ny: -.4 }; }
+    }
+    s.t += dt;
+    // Tilt: critically-soft spring so it lags the cursor with weight.
+    const k = 70, c = 11;
+    s.vrx += (k * (s.tx - s.rx) - c * s.vrx) * dt; s.rx += s.vrx * dt; s.vry += (k * (s.ty - s.ry) - c * s.vry) * dt; s.ry += s.vry * dt;
+    // Needle: under-damped spring + a living magnetic wobble, so it never feels pinned.
+    const kn = 120, cn = 7.5; s.nv += (kn * (s.nt - s.na) - cn * s.nv) * dt; s.na += s.nv * dt;
+    const wob = REDUCED ? 0 : Math.sin(s.t * 1.7) * 1.1 + Math.sin(s.t * 3.1 + 1) * .5;
+    this.cmp.style.setProperty('--rx', s.rx.toFixed(2) + 'deg'); this.cmp.style.setProperty('--ry', s.ry.toFixed(2) + 'deg');
+    this.needle.setAttribute('transform', `rotate(${(s.na + wob).toFixed(2)})`);
+    const L = this.light || { nx: 0, ny: 0 };
+    this.cmp.style.setProperty('--la', (Math.atan2(L.ny, L.nx) * 180 / Math.PI + 120).toFixed(1));
+    this.cmp.style.setProperty('--gx', (34 - L.nx * 24).toFixed(1) + '%'); this.cmp.style.setProperty('--gy', (24 - L.ny * 24).toFixed(1) + '%');
+    this.cmp.style.setProperty('--sx', (-s.ry * 1.4).toFixed(1) + 'px'); this.cmp.style.setProperty('--sy', (s.rx * 0.9).toFixed(1) + 'px');
+  }
+  openLid() { const lid = $('.l-lid', this.el); if (!lid) return; lid.classList.remove('open', 'gone'); void lid.offsetWidth; lid.style.opacity = 1; lid.style.visibility = 'visible';
+    this.st.na = -540; this.st.nv = 0; this.setNeedle(0); this.st.nt = ((S.aimed % PER_PAGE) / PER_PAGE) * 360; lid.classList.add('open'); this.hub.textContent = '·'; setTimeout(() => this.mark(), 900); }
+}
+Compass.n = 0; Compass.all = [];
+let last = performance.now();
+(function loop(now) { const dt = Math.min(.05, (now - last) / 1000); last = now; Compass.all.forEach(c => c.step(dt, now)); requestAnimationFrame(loop); })(last);
+
+const main = new Compass($('#cmp-main'), { interactive: true });
+const prev = new Compass($('#cmp-prev'), { interactive: false, amp: .6 });
+
+/* ───────── Dial tab ───────── */
+const ICON = {
+  open: '<svg viewBox="0 0 24 24"><path d="M7 17 17 7M8 7h9v9"/></svg>', edit: '<svg viewBox="0 0 24 24"><path d="m4 20 4-1 11-11-3-3L5 16l-1 4z"/></svg>',
+  more: '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg>',
+  grip: '<svg viewBox="0 0 24 24"><circle cx="9" cy="6" r="1.2"/><circle cx="15" cy="6" r="1.2"/><circle cx="9" cy="12" r="1.2"/><circle cx="15" cy="12" r="1.2"/><circle cx="9" cy="18" r="1.2"/><circle cx="15" cy="18" r="1.2"/></svg>',
+  chev: d => `<svg viewBox="0 0 24 24"><path d="${d}"/></svg>`, trash: '<svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg>',
+};
+function renderDial() {
+  const n = S.items.length, it = S.items[S.aimed];
+  const filled = n % PER_PAGE === 0 && n ? PER_PAGE : n % PER_PAGE;
+  $('#dial-eyebrow').textContent = n ? `Page ${main.page + 1} of ${pageCount()} · ${n} slot${n === 1 ? '' : 's'}` : 'Empty dial';
+  const t = $('#dial-title'), h = $('#dial-host'), a = $('#dial-actions');
+  if (it) {
+    t.innerHTML = `<span>${esc(it.title)}</span>`; h.textContent = hostOf(it.url);
+    a.innerHTML = `<button class="btn signal sheen" data-do="open">${ICON.open} Open</button><button class="btn sheen" data-do="edit">${ICON.edit} Edit</button><button class="btn danger" data-do="remove">${ICON.trash}</button>`;
+  } else {
+    t.innerHTML = n ? `${wordsNum(n)} slot${n === 1 ? '' : 's'},<br><em>one turn</em> of the dial.` : `Nothing here<br><em>yet.</em>`; h.textContent = n ? 'Hover a wedge to aim at it.' : 'Press + to add your first link.'; a.innerHTML = '';
+  }
+  $('#dial-title').classList.remove('swap'); void t.offsetWidth; t.classList.add('swap'); h.classList.remove('swap'); void h.offsetWidth; h.classList.add('swap');
+  const pc = pageCount(), pg = $('#pager');
+  pg.innerHTML = `<button data-pg="-1" ${main.page <= 0 ? 'disabled' : ''} aria-label="Previous page">${ICON.chev('m15 6-6 6 6 6')}</button><div class="dots">${Array.from({ length: pc }, (_, i) => `<i class="${i === main.page ? 'on' : ''}"></i>`).join('')}</div><button data-pg="1" ${main.page >= pc - 1 ? 'disabled' : ''} aria-label="Next page">${ICON.chev('m9 6 6 6-6 6')}</button><span>${filled}/${PER_PAGE} filled</span>`;
+}
+main.onAim = () => renderDial();
+$('#dial-actions').addEventListener('click', e => {
+  const b = e.target.closest('[data-do]'); if (!b) return; const it = S.items[S.aimed]; if (!it) return;
+  if (b.dataset.do === 'open') toast(`<i>↗</i> Opening ${esc(hostOf(it.url))}`); if (b.dataset.do === 'edit') openEdit(it); if (b.dataset.do === 'remove') removeItem(it.id);
+});
+$('#pager').addEventListener('click', e => { const b = e.target.closest('[data-pg]'); if (b) goPage(main.page + +b.dataset.pg); });
+function goPage(p) { p = clamp(p, 0, pageCount() - 1); if (p === main.page) return; S.aimed = clamp(p * PER_PAGE, 0, Math.max(0, S.items.length - 1)); main.setPage(p); renderDial(); }
+// Wedge click opens; drag onto another wedge swaps slots.
+let drag = null;
+main.wedges.addEventListener('pointerdown', e => {
+  const w = e.target.closest('.wedge'); if (!w) return; drag = { i: +w.dataset.i, x: e.clientX, y: e.clientY, active: false, w };
+  main.wedges.setPointerCapture?.(e.pointerId);
+});
+addEventListener('pointermove', e => {
+  if (!drag) return; if (!drag.active && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 7 && S.items[drag.i]) {
+    drag.active = true; main.drag = true; drag.w.classList.add('dragging'); drag.ghost = document.createElement('div'); drag.ghost.className = 'toast show'; drag.ghost.style.cssText = 'position:fixed;pointer-events:none;transform:translate(-50%,-50%) rotate(-4deg) scale(1.05);left:0;top:0;bottom:auto;opacity:1;transition:none;z-index:99';
+    drag.ghost.textContent = S.items[drag.i].title; document.body.appendChild(drag.ghost);
+  }
+  if (drag.active) { drag.ghost.style.left = e.clientX + 'px'; drag.ghost.style.top = e.clientY + 'px'; const over = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('.wedge');
+    $$('.wedge.dragover', main.wedges).forEach(x => x.classList.remove('dragover')); if (over && over !== drag.w) over.classList.add('dragover'); }
+});
+addEventListener('pointerup', e => {
+  if (!drag) return; const d = drag; drag = null; main.drag = false;
+  if (d.active) { d.ghost.remove(); d.w.classList.remove('dragging'); const over = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('.wedge'); $$('.wedge.dragover', main.wedges).forEach(x => x.classList.remove('dragover'));
+    if (over && +over.dataset.i !== d.i) { const j = +over.dataset.i; if (S.items[j]) [S.items[d.i], S.items[j]] = [S.items[j], S.items[d.i]]; else { S.items.push(S.items.splice(d.i, 1)[0]); }
+      S.aimed = Math.min(j, S.items.length - 1); main.draw(); renderDial(); renderLibrary(); toast(`<i>⇄</i> Moved to slot ${S.aimed + 1}`); } }
+  else { const w = e.target.closest?.('.wedge'); if (w && w === d.w) { const it = S.items[d.i]; if (it) toast(`<i>↗</i> Opening ${esc(hostOf(it.url))}`); else openComposer(); } }
+});
+
+/* ───────── Library ───────── */
+function slotSvg(i) { const a = (i % PER_PAGE) / PER_PAGE * TAU, [x, y] = polar(16, a);
+  return `<svg viewBox="-19 -19 38 38"><circle r="16" fill="none" stroke="rgba(240,229,205,.18)"/><circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.8" fill="#D97B46"/></svg>`; }
+function renderLibrary() {
+  const q = S.q.trim().toLowerCase(); const list = $('#list');
+  $('#lib-eyebrow').textContent = `${S.items.length} slots · ${pageCount()} page${pageCount() === 1 ? '' : 's'}`;
+  if (!S.items.length) { list.innerHTML = `<div style="text-align:center;padding:90px 0;color:var(--bone-dim);font-size:19px">Your dial is empty.<br>Add a link with <b style="color:var(--signal)">+</b>, or import from Safari.</div>`; return; }
+  let html = '', lastPage = -1, shown = 0;
+  S.items.forEach((it, i) => {
+    if (q && !(it.title + ' ' + it.url).toLowerCase().includes(q)) return; shown++;
+    if (pageOf(i) !== lastPage && !q) { lastPage = pageOf(i); html += `<div class="divider" data-id="d${lastPage}">Page ${lastPage + 1} <span style="letter-spacing:.06em;opacity:.7">· slots ${lastPage * PER_PAGE + 1}–${Math.min((lastPage + 1) * PER_PAGE, S.items.length)}</span></div>`; }
+    html += `<div class="row" draggable="true" data-id="${it.id}" data-i="${i}"><span class="ico grip">${ICON.grip}</span><div class="slot">${slotSvg(i)}<span>${i + 1}</span></div>
+      <div class="mono-tile">${esc((it.title.match(/[a-z0-9]/i) || ['•'])[0].toUpperCase())}</div>
+      <div class="t"><b>${esc(it.title)}</b><span>${esc(hostOf(it.url))}</span></div>
+      <div class="acts"><button class="ico" data-a="open" title="Open">${ICON.open}</button><button class="ico" data-a="edit" title="Edit">${ICON.edit}</button><button class="ico" data-a="more" title="More">${ICON.more}</button></div></div>`;
+  });
+  list.innerHTML = shown ? html : `<div style="text-align:center;padding:90px 0;color:var(--bone-dim);font-size:19px">Nothing matches “${esc(S.q)}”.</div>`;
+}
+$('#q').addEventListener('input', e => { S.q = e.target.value; renderLibrary(); });
+const list = $('#list');
+list.addEventListener('click', e => {
+  $('.menu')?.remove(); const row = e.target.closest('.row'); const btn = e.target.closest('[data-a]'); if (!row || !btn) return; const it = S.items.find(x => x.id === +row.dataset.id);
+  if (btn.dataset.a === 'open') toast(`<i>↗</i> Opening ${esc(hostOf(it.url))}`); if (btn.dataset.a === 'edit') openEdit(it);
+  if (btn.dataset.a === 'more') { e.stopPropagation(); const m = document.createElement('div'); m.className = 'menu'; m.innerHTML = `<button data-m="front">Move to slot 1</button><button data-m="remove" class="danger">Remove</button>`; row.appendChild(m);
+    m.addEventListener('click', ev => { const k = ev.target.dataset.m; m.remove(); if (k === 'front') { flip(list, '.row', () => { S.items = [it, ...S.items.filter(x => x !== it)]; renderLibrary(); }); renderAll(['dial']); } if (k === 'remove') removeItem(it.id); }); }
+});
+document.addEventListener('click', e => { if (!e.target.closest('.menu')) $('.menu')?.remove(); });
+let dragRow = null;
+list.addEventListener('dragstart', e => { const r = e.target.closest('.row'); if (!r) return; dragRow = r; r.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', r.dataset.id); });
+list.addEventListener('dragover', e => { if (!dragRow) return; e.preventDefault(); const over = e.target.closest('.row'); if (!over || over === dragRow) return;
+  const a = S.items.findIndex(x => x.id === +dragRow.dataset.id), b = S.items.findIndex(x => x.id === +over.dataset.id), rb = over.getBoundingClientRect();
+  if ((a < b && e.clientY < rb.top + rb.height * .55) || (a > b && e.clientY > rb.top + rb.height * .45)) return;
+  flip(list, '.row', () => { const [m] = S.items.splice(a, 1); S.items.splice(b, 0, m); renderLibrary(); dragRow = $(`.row[data-id="${m.id}"]`, list); dragRow?.classList.add('dragging'); }); });
+list.addEventListener('dragend', () => { dragRow?.classList.remove('dragging'); dragRow = null; renderAll(['dial']); });
+
+function removeItem(id) {
+  const row = $(`.row[data-id="${id}"]`, list); const finish = () => { flip(list, '.row', () => { S.items = S.items.filter(x => x.id !== id); S.aimed = clamp(S.aimed, 0, Math.max(0, S.items.length - 1)); main.page = pageOf(S.aimed); renderAll(); }); toast('<i>✓</i> Slot removed'); };
+  if (row && S.tab === 'library' && !REDUCED) { row.classList.add('removing'); setTimeout(finish, 320); } else finish();
+}
+
+/* ───────── Import ───────── */
+const LOCK = open => `<div class="lock ${open ? 'open' : ''}"><svg viewBox="0 0 120 120"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#E3D2A2"/><stop offset=".5" stop-color="#B39257"/><stop offset="1" stop-color="#7a5e2f"/></linearGradient></defs>
+  <path class="shackle" d="M36 54V38a24 24 0 0 1 48 0v16" fill="none" stroke="#B39257" stroke-width="9" stroke-linecap="round"/><rect x="22" y="52" width="76" height="56" rx="14" fill="url(#lg)"/><rect x="22" y="52" width="76" height="56" rx="14" fill="none" stroke="#2F2717" stroke-width="1.5"/>
+  ${open ? '<path class="tick" d="M44 80l12 12 22-24" fill="none" stroke="#33261A" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>' : '<circle cx="60" cy="76" r="7" fill="#33261A"/><rect x="57" y="78" width="6" height="14" rx="3" fill="#33261A"/>'}</svg></div>`;
+function ringSvg(on) { let d = ''; for (let k = 0; k < PER_PAGE; k++) { const [x, y] = polar(58, k / PER_PAGE * TAU); d += `<circle class="p ${k < on ? 'on' : ''}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.5"/>`; } return `<svg viewBox="-75 -75 150 150"><circle r="58" fill="none" stroke="rgba(240,229,205,.12)"/>${d}</svg>`; }
+function renderImport() {
+  const el = $('#imp'), have = new Set(S.items.map(x => hostOf(x.url))), fresh = IMPORTABLE.filter(([, u]) => !have.has(u));
+  if (S.imp === 'locked') el.innerHTML = `${LOCK(false)}<h1>Bring your Safari<br>bookmarks along</h1><p>Safari keeps them behind a macOS permission. It’s <b style="color:var(--bone)">optional</b> — the dial, reordering and every setting work without it.</p>
+    <div class="row-btns"><button class="btn signal sheen" id="i-grant">Open Full Disk Access</button><button class="btn" id="i-skip">Not now</button></div>`;
+  else if (S.imp === 'ready') el.innerHTML = `${LOCK(true)}<h1>Safari is connected</h1><div class="stats"><div class="stat new"><b>${fresh.length}</b><span>New</span></div><div class="stat"><b>${S.items.length}</b><span>Already here</span></div><div class="stat"><b>3</b><span>Reading list, skipped</span></div></div>
+    <div class="chips">${fresh.map((f, i) => `<span class="chip" style="animation-delay:${.25 + i * .06}s">${esc(f[0])}</span>`).join('')}</div>
+    <div class="row-btns"><button class="btn signal sheen" id="i-go" ${fresh.length ? '' : 'disabled'}>Import ${fresh.length} bookmark${fresh.length === 1 ? '' : 's'}</button></div><p style="margin:18px auto 0;font-size:14px">Your existing slots never move. New links are added after them.</p>`;
+  else if (S.imp === 'running') el.innerHTML = `<div class="ring">${ringSvg(0)}</div><div class="counter" id="i-count">0</div><p>Filling slots…</p>`;
+  else el.innerHTML = `${LOCK(true)}<h1>Up to date</h1><p>${S.impCount ? `Added ${S.impCount} bookmark${S.impCount === 1 ? '' : 's'} — slots ${S.items.length - S.impCount + 1}–${S.items.length}.` : 'Everything in Safari is already on your dial.'}</p><div class="row-btns"><button class="btn signal sheen" id="i-see">See the dial</button></div>`;
+}
+$('#imp').addEventListener('click', e => {
+  const id = e.target.closest('button')?.id; if (!id) return;
+  if (id === 'i-skip') setTab('dial');
+  if (id === 'i-grant') { S.imp = 'ready'; renderImport(); const l = $('.lock'); l.classList.remove('open'); l.innerHTML = LOCK(false).replace(/^<div[^>]*>|<\/div>$/g, ''); requestAnimationFrame(() => requestAnimationFrame(() => { l.innerHTML = LOCK(true).replace(/^<div[^>]*>|<\/div>$/g, ''); l.classList.add('open'); })); }
+  if (id === 'i-go') runImport(); if (id === 'i-see') setTab('dial');
+});
+function runImport() {
+  const have = new Set(S.items.map(x => hostOf(x.url))), fresh = IMPORTABLE.filter(([, u]) => !have.has(u)); S.imp = 'running'; renderImport(); let k = 0;
+  const tick = () => { k++; const ring = $('.ring'); if (ring) ring.innerHTML = ringSvg(Math.min(k, PER_PAGE)); const c = $('#i-count'); if (c) c.textContent = k;
+    if (k < fresh.length) setTimeout(tick, REDUCED ? 0 : 260); else setTimeout(() => { fresh.forEach(([t, u]) => S.items.push(mk(t, u))); S.impCount = fresh.length; S.imp = 'done'; renderAll(); toast(`<i>✓</i> ${fresh.length} bookmarks added`); }, REDUCED ? 0 : 500); };
+  setTimeout(tick, 300);
+}
+
+/* ───────── Settings ───────── */
+const seg = (name, opts, v) => `<div class="seg" data-seg="${name}"><i></i>${opts.map((o, i) => `<button class="${i === v ? 'on' : ''}" data-v="${i}">${o}</button>`).join('')}</div>`;
+const tog = (k) => `<button class="tog ${S.settings[k] ? 'on' : ''}" data-tog="${k}" role="switch" aria-checked="${!!S.settings[k]}"></button>`;
+let recording = false;
+function renderSettings() {
+  const s = S.settings, keep = $('#settings').scrollTop;
+  $('#settings').innerHTML = `<div class="eyebrow">Preferences</div><h1>Settings</h1>
+  <div class="card"><h3>Shortcut</h3><div class="line"><div>Open the dial<small>Works anywhere. Press again to close.</small></div><button class="recorder ${recording ? 'rec' : ''}" id="rec">${recording ? 'Press keys…' : s.hotkey.map(k => `<span class="key" style="min-width:30px;height:30px;font-size:13px;box-shadow:0 2px 0 #120d09">${k}</span>`).join('')}</button></div></div>
+  <div class="card"><h3>Opening links</h3><div class="line"><span>Open in</span>${seg('openIn', ['New tab', 'Current tab', 'New window'], s.openIn)}</div>
+    <div class="line"><div>Keep the current tab focused<small>Open in the background.</small></div>${tog('background')}</div></div>
+  <div class="card"><h3>The dial</h3><div class="line"><span>Size</span><div style="display:flex;gap:14px;align-items:center"><input type="range" id="radius" min="140" max="260" value="${s.radius}" style="--v:${(s.radius - 140) / 1.2}%"><span style="font:14px var(--mono);width:34px;color:var(--bone-dim)">${s.radius}</span></div></div>
+    <div class="line"><div>Show slot numbers<small>On every wedge.</small></div>${tog('numbers')}</div></div>
+  <div class="card"><h3>Startup</h3><div class="line"><span>Launch at login</span>${tog('login')}</div><div class="line"><div>Re-read Safari on launch<small>Needs Full Disk Access.</small></div>${tog('sync')}</div></div>
+  <div class="card"><h3>About</h3><div class="line" style="font-size:15px;color:var(--bone-dim)">Nine slots per page · 1–9 opens · ← → turns the page · Esc closes</div></div>`;
+  $('#settings').scrollTop = keep; seg_init(); applyPreview();
+}
+function seg_init() { $$('.seg').forEach(sg => { const on = $('button.on', sg), i = $('i', sg); i.style.left = on.offsetLeft + 'px'; i.style.width = on.offsetWidth + 'px'; }); }
+function applyPreview() { const s = S.settings; $('#cmp-prev').style.setProperty('--scale', (.42 + (s.radius - 140) / 120 * .22).toFixed(3)); if (prev.showNumbers !== s.numbers) { prev.showNumbers = s.numbers; prev.draw(); } }
+$('#settings').addEventListener('click', e => {
+  const sg = e.target.closest('[data-seg]'), t = e.target.closest('[data-tog]');
+  if (sg && e.target.dataset.v != null) { S.settings.openIn = +e.target.dataset.v; $$('button', sg).forEach(b => b.classList.toggle('on', b === e.target)); seg_init(); }
+  if (t) { const k = t.dataset.tog; S.settings[k] = !S.settings[k]; t.classList.toggle('on', S.settings[k]); t.setAttribute('aria-checked', S.settings[k]); if (k === 'numbers') { applyPreview(); main.showNumbers = S.settings.numbers; main.draw(); } }
+  if (e.target.closest('#rec')) { recording = !recording; renderSettings(); }
+});
+$('#settings').addEventListener('input', e => { if (e.target.id === 'radius') { S.settings.radius = +e.target.value; e.target.style.setProperty('--v', (S.settings.radius - 140) / 1.2 + '%'); e.target.nextElementSibling.textContent = S.settings.radius; applyPreview(); } });
+
+/* ───────── Composer ───────── */
+const fab = $('#fab'); let composing = false;
+const clip = $('#clip');
+function openComposer() { if (composing) return; composing = true; fab.classList.add('open'); setTimeout(() => $('#c-url').focus(), 380); if (!clipUsed) clip.classList.add('show'); }
+function closeComposer() { composing = false; fab.classList.remove('open'); clip.classList.remove('show'); $('#c-err').textContent = ''; document.activeElement?.blur?.(); }
+let clipUsed = false;
+fab.addEventListener('click', e => { if (!composing) openComposer(); else if (e.target.closest('#fab-plus')) closeComposer(); });
+clip.addEventListener('click', () => { clipUsed = true; $('#c-url').value = 'docs.swift.org'; $('#c-name').value = 'Swift Docs'; clip.classList.remove('show'); $('#c-url').focus(); });
+$('#compose').addEventListener('submit', e => {
+  e.preventDefault(); let u = $('#c-url').value.trim(); if (!u) return;
+  if (!/^[\w.-]+\.[a-z]{2,}|^\d+\.\d+\.\d+\.\d+|^https?:\/\//i.test(u)) { $('#c-err').textContent = 'That doesn’t look like a web address.'; return; }
+  $('#c-err').textContent = ''; const name = $('#c-name').value.trim() || (hostOf(u).replace(/^www\./, '').split('.')[0].replace(/^./, c => c.toUpperCase()));
+  const it = mk(name, hostOf(u)); S.items.push(it); S.aimed = S.items.length - 1; main.page = pageOf(S.aimed); main.dropId = it.id;
+  $('#c-name').value = ''; $('#c-url').value = ''; closeComposer(); setTab('dial'); renderAll(); toast(`<i>✓</i> ${esc(name)} → slot ${S.aimed + 1}`);
+});
+
+/* ───────── Edit sheet ───────── */
+let editing = null;
+function openEdit(it) { editing = it; $('#e-name').value = it.title; $('#e-url').value = it.url; $('#edit').classList.add('show'); setTimeout(() => $('#e-name').select(), 120); }
+const closeEdit = () => { $('#edit').classList.remove('show'); editing = null; };
+$('#e-cancel').onclick = closeEdit; $('#edit').addEventListener('pointerdown', e => { if (e.target.id === 'edit') closeEdit(); });
+$('#edit-form').addEventListener('submit', e => { e.preventDefault(); if (!editing) return; editing.title = $('#e-name').value.trim() || editing.title; editing.url = hostOf($('#e-url').value.trim() || editing.url); closeEdit(); renderAll(); toast('<i>✓</i> Saved'); });
+
+/* ───────── Command palette ───────── */
+let palSel = 0, palRows = [];
+function palBuild() {
+  const q = $('#pal-q').value.toLowerCase();
+  const cmds = [['Go to Dial', '', () => setTab('dial')], ['Go to Library', '', () => setTab('library')], ['Import from Safari', '', () => setTab('import')], ['Settings', '⌘,', () => setTab('settings')], ['Add bookmark', '⌘N', () => openComposer()]];
+  palRows = [...cmds.map(([t, k, f]) => ({ t, k, f })), ...S.items.map((it, i) => ({ t: it.title, k: `slot ${i + 1}`, f: () => { setTab('dial'); main.aimAt(i); } }))].filter(r => r.t.toLowerCase().includes(q)).slice(0, 8);
+  palSel = clamp(palSel, 0, Math.max(0, palRows.length - 1));
+  $('#pal-list').innerHTML = palRows.map((r, i) => `<li class="${i === palSel ? 'sel' : ''}" data-i="${i}">${esc(r.t)}<small>${esc(r.k)}</small></li>`).join('');
+}
+const openPal = () => { $('#pal').classList.add('show'); $('#pal-q').value = ''; palSel = 0; palBuild(); setTimeout(() => $('#pal-q').focus(), 60); };
+const closePal = () => $('#pal').classList.remove('show');
+$('#pal-q').addEventListener('input', () => { palSel = 0; palBuild(); });
+$('#pal-q').addEventListener('keydown', e => { if (e.key === 'ArrowDown') { palSel = Math.min(palSel + 1, palRows.length - 1); palBuild(); e.preventDefault(); } if (e.key === 'ArrowUp') { palSel = Math.max(0, palSel - 1); palBuild(); e.preventDefault(); }
+  if (e.key === 'Enter') { const r = palRows[palSel]; closePal(); r && setTimeout(r.f, 120); } });
+$('#pal-list').addEventListener('click', e => { const li = e.target.closest('li'); if (li) { const r = palRows[+li.dataset.i]; closePal(); setTimeout(r.f, 120); } });
+$('#pal').addEventListener('pointerdown', e => { if (e.target.id === 'pal') closePal(); });
+
+/* ───────── Tabs ───────── */
+const TABS = ['dial', 'library', 'import', 'settings'];
+function movePlate(animate = true) {
+  const b = $(`#tabs button[data-tab="${S.tab}"]`), plate = $('#plate'); if (!b) return;
+  if (!animate) plate.style.transition = 'none'; plate.style.width = b.offsetWidth + 'px'; plate.style.transform = `translateX(${b.offsetLeft}px)`;
+  if (!animate) { void plate.offsetWidth; plate.style.transition = ''; } else { plate.classList.remove('flash'); void plate.offsetWidth; plate.classList.add('flash'); }
+}
+function setTab(t, first) {
+  if (t === S.tab && !first) return; const prevView = $(`#view-${S.tab}`); S.tab = t;
+  $$('#tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === t)); movePlate(!first);
+  if (!first && prevView) { prevView.classList.remove('active'); prevView.classList.add('leaving'); setTimeout(() => prevView.classList.remove('leaving'), 230); }
+  const v = $(`#view-${t}`); v.classList.remove('leaving'); void v.offsetWidth; v.classList.add('active');
+  if (t === 'dial') { main.setPage(pageOf(S.aimed)); renderDial(); } if (t === 'settings') { renderSettings(); } if (t === 'import') renderImport(); if (t === 'library') renderLibrary();
+  fab.style.opacity = t === 'settings' || t === 'import' ? '0' : '1'; fab.style.pointerEvents = t === 'settings' || t === 'import' ? 'none' : ''; if (t === 'settings' || t === 'import') closeComposer();
+}
+$('#tabs').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) setTab(b.dataset.tab); });
+function renderAll(only) { const r = { dial: () => { main.draw(); renderDial(); }, library: renderLibrary, import: renderImport, settings: () => { if (S.tab === 'settings') renderSettings(); } };
+  (only || Object.keys(r)).forEach(k => r[k]()); }
+
+/* ───────── Keyboard ───────── */
+const typing = () => /INPUT|TEXTAREA/.test(document.activeElement?.tagName || '');
+addEventListener('keydown', e => {
+  const mod = e.metaKey || e.ctrlKey;
+  if (recording) { e.preventDefault(); if (!['Meta', 'Control', 'Shift', 'Alt'].includes(e.key)) { S.settings.hotkey = [e.metaKey ? '⌘' : e.ctrlKey ? '⌃' : '', e.altKey ? '⌥' : '', e.shiftKey ? '⇧' : '', e.key.toUpperCase()].filter(Boolean); recording = false; renderSettings(); } return; }
+  if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); $('#pal').classList.contains('show') ? closePal() : openPal(); return; }
+  if (mod && e.key.toLowerCase() === 'n') { e.preventDefault(); setTab('dial'); openComposer(); return; }
+  if (mod && e.key === ',') { e.preventDefault(); setTab('settings'); return; }
+  if (e.key.toLowerCase() === 'e' && (mod || !typing())) { e.preventDefault(); $$('#hotkey .key').forEach(k => k.classList.add('down')); setTimeout(() => $$('#hotkey .key').forEach(k => k.classList.remove('down')), 220); return; }
+  if (e.key === 'Escape') { if ($('#pal').classList.contains('show')) closePal(); else if ($('#edit').classList.contains('show')) closeEdit(); else if (composing) closeComposer(); return; }
+  if (typing() || mod) return;
+  if (e.key.toLowerCase() === 'r') { reset(); main.page = 0; S.imp = 'locked'; renderAll(); setTab('dial'); toast('<i>↺</i> Demo reset'); }
+  if (e.key.toLowerCase() === 'l') { setTab('dial'); main.openLid(); }
+  if (S.tab === 'dial') {
+    if (/^[1-9]$/.test(e.key)) { const i = main.page * PER_PAGE + +e.key - 1; main.aimAt(i); const it = S.items[i]; it ? toast(`<i>↗</i> Opening ${esc(hostOf(it.url))}`) : openComposer(); }
+    if (e.key === 'ArrowRight') goPage(main.page + 1); if (e.key === 'ArrowLeft') goPage(main.page - 1);
+  }
+});
+
+/* ───────── Boot ───────── */
+const start = Q.get('tab') || 'dial';
+S.tab = '__'; setTab(TABS.includes(start) ? start : 'dial', true);
+if (Q.has('hover')) { S.aimed = clamp(+Q.get('hover') - 1, 0, S.items.length - 1); main.mark(); renderDial(); }
+main.draw(); renderDial(); renderLibrary(); renderImport(); prev.draw();
+if (!Q.has('nolid') && !REDUCED && S.tab === 'dial') main.openLid(); else { $('.l-lid', main.el)?.classList.add('gone'); main.mark(); }
+if (Q.has('compose')) openComposer(); if (Q.has('palette')) openPal(); if (Q.has('edit')) openEdit(S.items[1]);
+if (Q.get('import')) { S.imp = Q.get('import'); renderImport(); }
+document.fonts?.ready.then(() => movePlate(false));
+movePlate(false);
+})();
+</script>
+</body>
+</html>
