@@ -116,11 +116,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 18) {
             paragraph("Every bookmark you actually use, on one ring, at your cursor. Press the shortcut anywhere and the dial appears where your pointer already is, so nothing moves.")
             HStack(spacing: 14) {
-                HStack(spacing: 6) {
-                    ForEach(Array(KeyParts.split(model.hotkeyDisplay).enumerated()), id: \.offset) { _, part in
-                        PhysicalKey(text: part)
-                    }
-                }
+                HotkeyKeycaps(displayName: model.hotkeyDisplay)
                 Text("opens the dial")
                     .font(Palette.display(16, .regular))
                     .foregroundStyle(Palette.boneDim)
@@ -272,7 +268,7 @@ enum OnboardingStep: Int, CaseIterable {
         switch self {
         case .welcome: return "You can reopen this tour from the menu bar at any time."
         case .safari: return "Nothing here is required to start using the app."
-        case .ready: return "Reopen this tour from the menu bar whenever you want."
+        case .ready: return "Reopen this tour from the menu bar any time."
         }
     }
 }

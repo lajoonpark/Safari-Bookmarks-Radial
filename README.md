@@ -20,6 +20,30 @@ leave the keys and the cursor never leaves the page.
   also dismisses.
 - Menu bar app only: no Dock icon, no background CPU when closed.
 
+## The window
+
+The manager window is a leather desk with one section at a time, switched from a brass tab bar
+(⌘1–⌘4). It is deliberately sparse: each tab does one job.
+
+<p align="center">
+  <img src="docs/screenshots/dial.webp" alt="The Dial tab: the live compass beside the slot you are aiming at" width="760">
+</p>
+
+| Tab | What it is for |
+| --- | --- |
+| **Dial** | The real compass, live: it tilts toward the cursor, aims at a wedge on hover, opens a link on click. The text beside it follows the needle, with Open, Edit and Remove for that slot. `1`–`9` open a slot and `←` `→` turn the page. |
+| **Library** | Every slot in dial order, grouped by page. Drag a row onto another to move it there; search to filter (reordering waits until you clear it). |
+| **Import** | Safari import and its Full Disk Access permission in one place. It shows a dry run first (what is new, what is already on your dial), then fills the slots on screen. |
+| **Settings** | Shortcut, which browser and tab links open in, dial size (with a live preview) and startup. |
+
+Adding a link is the floating **+** (⌘N), which opens into a small form and offers a link from
+your clipboard. The menu-bar item offers the same thing as a quick panel.
+
+<p align="center">
+  <img src="docs/screenshots/library.webp" alt="The Library tab" width="380">
+  <img src="docs/screenshots/import.webp" alt="The Import tab" width="380">
+</p>
+
 ## Why this design
 
 **Swift + AppKit, not Electron.** The app is small and idles at essentially zero CPU. A
@@ -35,7 +59,7 @@ single-digit number keys run out. Beyond nine, arrow keys page.
 
 **Order is the product.** Slice numbers are muscle memory, so importing from Safari never
 reshuffles what you already have: existing links keep their position and only new ones are
-appended. You can reorder rows in the manager with the up/down arrows.
+appended. You can drag rows in the Library to reorder them.
 
 ## Two things worth knowing before you build
 
@@ -93,7 +117,7 @@ Requires macOS 14+ and Xcode (or the Command Line Tools).
 git clone <this-repo>
 cd Safari-Bookmarks-Radial
 
-swift test              # 86 unit tests for the portable core
+swift test              # unit tests for the portable core
 ./scripts/build.sh --run
 ```
 
@@ -102,11 +126,14 @@ swift test              # 86 unit tests for the portable core
 
 First run:
 
-1. The ring icon appears in the menu bar; the manager window opens since you have no
-   bookmarks yet.
-2. Click **Import from Safari**. If macOS blocks the read, click **Grant Full Disk Access**,
-   add the app, and import again.
+1. A short tour opens, with the live compass in it. The ring icon appears in the menu bar.
+2. Add a link with the **+** button, or open the **Import** tab. If macOS blocks the read,
+   click **Open Full Disk Access**, add the app, and come back: the lock opens by itself.
 3. Press **⌘E** anywhere.
+
+<p align="center">
+  <img src="docs/screenshots/onboarding.webp" alt="The first-run tour" width="760">
+</p>
 
 If you'd rather build in Xcode: `open Package.swift`, select the `SafariRadial` scheme, run.
 Note that running from Xcode/`swift run` gives you an unsigned binary, which macOS treats as
@@ -137,8 +164,12 @@ Sources/
     BookmarkManagerView.swift  the tabbed window shell (Dial / Library / Import / Settings)
     ManagerTabs.swift          tab enum, router, brass tab bar
     BrassUI.swift              motion springs, pointer light, brass toggle/segmented/slider
+    LiveCompass.swift          the overlay compass, embedded in the window (and the dial's keys)
     DialTabView / LibraryTabView / ImportTabView / SettingsView / AddComposer
-Tests/RadialCoreTests/  68 tests
+Tests/RadialCoreTests/  unit tests for everything in RadialCore
+preview/                 browser harnesses for the look: compass-preview.html (the instrument)
+                         and manager-preview.html (the tabbed window, with its motion)
+docs/screenshots/        README images
 scripts/build.sh        .app assembly + signing
 ```
 
@@ -158,6 +189,16 @@ verifiable rather than only checkable by hand.
 | Click centre ✕ | Close |
 | Click outside | Close |
 | Drag off a slice, release | Cancels that activation |
+
+In the manager window:
+
+| Input | Result |
+| --- | --- |
+| `⌘1` … `⌘4` | Dial, Library, Import, Settings |
+| `⌘,` | Settings |
+| `⌘N` | Add a link |
+| `1`–`9`, `←` `→` (on the Dial tab) | Open a slot, turn the page |
+| Drag a Library row onto another | Move it into that slot |
 
 Opening overshoots slightly and settles (spring, not an easing curve). Hovering lifts a
 slice, widens its wedge, brightens its gradient, and rotates the centre ✕ 45°. Pressing

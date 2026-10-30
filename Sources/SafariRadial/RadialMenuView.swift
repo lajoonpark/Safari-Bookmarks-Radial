@@ -200,7 +200,8 @@ final class RadialMenuView: NSView {
     func fitEmbedded() {
         guard isEmbedded, bounds.height > 40, bounds.width > 40 else { return }
         var fitted = CompassMetrics(cardRadius: requestedRadius).fitted(toHeight: bounds.height - 12)
-        let widthRatio = fitted.caseRadius / fitted.cardRadius
+        // The lid, not the case, is the widest part once it is open.
+        let widthRatio = max(fitted.caseRadius, fitted.lidHalfWidth()) / fitted.cardRadius
         let widest = (bounds.width - 16) / 2 / widthRatio
         if fitted.cardRadius > widest, widest > 40 {
             fitted = CompassMetrics(cardRadius: widest)

@@ -171,9 +171,23 @@ public struct CompassMetrics: Equatable, Sendable {
     /// is why the top of the open lid used to hang off the screen and the layout reserved far
     /// less room than the instrument needed.
     public func lidReach(at angle: CGFloat = CompassMetrics.lidOpenAngle) -> CGFloat {
+        lidExtents(at: angle).reach
+    }
+
+    /// Distance from the centre to the side of the open lid, which is wider than the case.
+    ///
+    /// The open lid stands toward the camera, so perspective magnifies it: it is drawn about a
+    /// quarter wider than the case it hangs from. A window that fitted only the case clipped the
+    /// lid at its edge, so anything that needs the instrument's true width asks for this.
+    public func lidHalfWidth(at angle: CGFloat = CompassMetrics.lidOpenAngle) -> CGFloat {
+        lidExtents(at: angle).halfWidth
+    }
+
+    private func lidExtents(at angle: CGFloat) -> (reach: CGFloat, halfWidth: CGFloat) {
         let camera = CompassCamera(eyeDistance: cardRadius * RadialTilt.eyeDistanceRatio)
         let lid = CompassLid(metrics: self, openness: angle / CompassMetrics.lidOpenAngle)
         var reach: CGFloat = 0
+        var halfWidth: CGFloat = 0
         // The pan has depth, so the highest point is on the cover's edge or the wall's top, not
         // the rim: sample all three rings.
         let rings: [(radius: CGFloat, height: CGFloat)] = [
@@ -186,9 +200,10 @@ public struct CompassMetrics: Equatable, Sendable {
             for ring in rings {
                 let point = camera.project(lid.swing(lid.point(radius: ring.radius, angle: a, height: ring.height))).point
                 reach = max(reach, -point.y)
+                halfWidth = max(halfWidth, abs(point.x))
             }
         }
-        return reach
+        return (reach, halfWidth)
     }
 
     /// Total height the instrument needs, lid open.

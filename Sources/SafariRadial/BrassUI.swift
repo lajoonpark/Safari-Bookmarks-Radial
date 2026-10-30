@@ -647,3 +647,177 @@ private struct CheckShape: Shape {
         return path
     }
 }
+
+// MARK: - Hotkey keycaps
+
+extension Notification.Name {
+    /// Posted by the app whenever the global shortcut fires, so on-screen keycaps can press too.
+    static let dialHotkeyPressed = Notification.Name("SafariRadial.dialHotkeyPressed")
+}
+
+/// The shortcut drawn as physical keys, which sink when you press the real thing.
+struct HotkeyKeycaps: View {
+    let displayName: String
+    @State private var pressed = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(KeyParts.split(displayName).enumerated()), id: \.offset) { _, part in
+                PhysicalKey(text: part, pressed: pressed)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .dialHotkeyPressed)) { _ in
+            pressed = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) { pressed = false }
+        }
+    }
+}
+
+// MARK: - Action menu
+
+struct BrassMenuItem: Identifiable {
+    let id = UUID()
+    let title: String
+    var systemImage: String?
+    var destructive = false
+    /// Draws a hairline above this item.
+    var separatorBefore = false
+    let action: () -> Void
+}
+
+/// A "more" button that opens a brass list of actions: the system menu cannot be restyled.
+///
+/// The host raises its own row while `isOpen` is true (`.zIndex`), or later siblings paint over
+/// the list. The list opens downward, or upward when the click was low in the window, so it is
+/// never cut off by the edge of a scroll view.
+struct BrassActionMenu: View {
+    let items: [BrassMenuItem]
+    var help = "More"
+    @Binding var isOpen: Bool
+    @State private var opensUpward = false
+    @State private var hovering = false
+
+    var body: some View {
+        Button {
+            if !isOpen, let event = NSApp.currentEvent {
+                // Window coordinates run up from the bottom edge: a click in the lowest part of
+                // the window leaves no room below for the list.
+                opensUpward = event.locationInWindow.y < 260
+            }
+            withAnimation(Motion.spring) { isOpen.toggle() }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(isOpen ? Palette.signal : (hovering ? Palette.bone : Palette.boneDim))
+                .frame(width: 36, height: 36)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Palette.bone.opacity(hovering || isOpen ? 0.10 : 0))
+                )
+                .scaleEffect(hovering ? 1.12 : 1)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .motion(Motion.snap, value: hovering)
+        .help(help)
+        .accessibilityLabel(help)
+        .overlay(alignment: opensUpward ? .bottomTrailing : .topTrailing) {
+            if isOpen {
+                ZStack(alignment: opensUpward ? .bottomTrailing : .topTrailing) {
+                    Color.clear
+                        .frame(width: 3000, height: 3000)
+                        .contentShape(Rectangle())
+                        .onTapGesture { close() }
+                    list
+                        .offset(y: opensUpward ? -42 : 42)
+                }
+                .transition(.scale(scale: 0.92, anchor: opensUpward ? .bottomTrailing : .topTrailing)
+                    .combined(with: .opacity))
+            }
+        }
+    }
+
+    private func close() {
+        withAnimation(Motion.spring) { isOpen = false }
+    }
+
+    private var list: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(items) { item in
+                if item.separatorBefore {
+                    Rectangle()
+                        .fill(Palette.rim)
+                        .frame(height: 1)
+                        .padding(.vertical, 4)
+                        .padding(.horizontal, 6)
+                }
+                MenuRow(item: item) {
+                    close()
+                    item.action()
+                }
+            }
+        }
+        .padding(6)
+        .frame(minWidth: 200)
+        .fixedSize()
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Palette.voidRaised))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Palette.rimStrong, lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.6), radius: 26, y: 14)
+    }
+}
+
+private struct MenuRow: View {
+    let item: BrassMenuItem
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        let tint = item.destructive ? Palette.alarm : Palette.bone
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: item.systemImage ?? "circle")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(item.destructive ? Palette.alarm : Palette.boneDim)
+                    .frame(width: 16)
+                    .opacity(item.systemImage == nil ? 0 : 1)
+                Text(item.title)
+                    .font(Palette.display(15, .regular))
+                    .foregroundStyle(tint)
+                Spacer(minLength: 8)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill((item.destructive ? Palette.alarm : Palette.signal).opacity(hovering ? 0.16 : 0))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .motion(Motion.snap, value: hovering)
+    }
+}
+
+// MARK: - Dissolve
+
+/// A removed thing goes soft and slides off, instead of simply vanishing.
+struct DissolveModifier: ViewModifier {
+    /// 0 at rest, 1 when gone.
+    let amount: Double
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(1 - amount)
+            .blur(radius: amount * 10)
+            .scaleEffect(1 - amount * 0.05)
+            .offset(x: CGFloat(amount) * 36)
+    }
+}
+
+extension AnyTransition {
+    static var dissolve: AnyTransition {
+        .modifier(active: DissolveModifier(amount: 1), identity: DissolveModifier(amount: 0))
+    }
+}

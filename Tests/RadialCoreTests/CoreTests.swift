@@ -1005,6 +1005,14 @@ final class CompassCameraTests: XCTestCase {
 
 final class CompassMetricsTests: XCTestCase {
 
+    func testTheOpenLidIsAtLeastAsWideAsTheCaseAndScalesWithIt() {
+        let small = CompassMetrics(cardRadius: 100)
+        let large = CompassMetrics(cardRadius: 200)
+        // A window sized to the case alone would clip the lid.
+        XCTAssertGreaterThan(small.lidHalfWidth(), small.caseRadius)
+        XCTAssertEqual(large.lidHalfWidth(), small.lidHalfWidth() * 2, accuracy: 1e-6)
+    }
+
     func testEverythingScalesFromTheCardRadius() {
         let small = CompassMetrics(cardRadius: 100)
         let large = CompassMetrics(cardRadius: 200)

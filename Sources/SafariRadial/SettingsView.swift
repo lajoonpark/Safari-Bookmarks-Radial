@@ -67,7 +67,7 @@ struct SettingsView: View {
     private var preview: some View {
         let radius = CGFloat(model.preferences.menuRadius)
         let metrics = CompassMetrics(cardRadius: radius)
-        let width = metrics.caseRadius * 2 + 16
+        let width = max(metrics.caseRadius, metrics.lidHalfWidth()) * 2 + 16
         let height = metrics.openHeight + 12
         let scale: CGFloat = 0.3
         let shown = Array(previewBookmarks.prefix(RadialLayout.maxSlicesPerPage))

@@ -260,6 +260,8 @@ struct EditBookmarkSheet: View {
 /// window instead of a generic icon.
 struct MiniDial: View {
     var filled = true
+    /// Off when something else draws the needle (see `SearchingDial`).
+    var showsNeedle = true
 
     var body: some View {
         GeometryReader { proxy in
@@ -321,13 +323,15 @@ struct MiniDial: View {
                 }
 
                 // Needle, pointing at the first slot.
-                var needle = Path()
-                let tip = CGPoint(x: centre.x, y: centre.y - metrics.cardRadius * 0.60)
-                needle.move(to: tip)
-                needle.addLine(to: CGPoint(x: centre.x - side * 0.030, y: centre.y + metrics.cardRadius * 0.42))
-                needle.addLine(to: CGPoint(x: centre.x + side * 0.030, y: centre.y + metrics.cardRadius * 0.42))
-                needle.closeSubpath()
-                context.fill(needle, with: .color(CompassTheme.vermilion.swiftUI().opacity(filled ? 1 : 0.30)))
+                if showsNeedle {
+                    var needle = Path()
+                    let tip = CGPoint(x: centre.x, y: centre.y - metrics.cardRadius * 0.60)
+                    needle.move(to: tip)
+                    needle.addLine(to: CGPoint(x: centre.x - side * 0.030, y: centre.y + metrics.cardRadius * 0.42))
+                    needle.addLine(to: CGPoint(x: centre.x + side * 0.030, y: centre.y + metrics.cardRadius * 0.42))
+                    needle.closeSubpath()
+                    context.fill(needle, with: .color(CompassTheme.vermilion.swiftUI().opacity(filled ? 1 : 0.30)))
+                }
 
                 // Hub.
                 context.fill(
@@ -416,5 +420,50 @@ struct SlotGutter: View {
         .frame(width: 26, height: 26)
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: emphasised)
         .help(helpText)
+    }
+}
+
+// MARK: - Searching dial
+
+/// The empty dial: its needle wanders, looking for something to point at.
+///
+/// Slow and slightly drunk, the way a real needle behaves when nothing is pulling on it.
+struct SearchingDial: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            MiniDial(filled: false, showsNeedle: false)
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { timeline in
+                let time = timeline.date.timeIntervalSinceReferenceDate
+                Canvas { context, size in
+                    let side = min(size.width, size.height)
+                    let metrics = CompassMetrics(cardRadius: side * 0.36)
+                    let centre = CGPoint(x: size.width / 2, y: size.height / 2)
+                    let wander = reduceMotion ? 0 : sin(time * 0.8) * 0.9 + sin(time * 2.1 + 1) * 0.22
+
+                    var drawing = context
+                    drawing.translateBy(x: centre.x, y: centre.y)
+                    drawing.rotate(by: .radians(wander))
+                    var needle = Path()
+                    needle.move(to: CGPoint(x: 0, y: -metrics.cardRadius * 0.60))
+                    needle.addLine(to: CGPoint(x: -side * 0.030, y: metrics.cardRadius * 0.42))
+                    needle.addLine(to: CGPoint(x: side * 0.030, y: metrics.cardRadius * 0.42))
+                    needle.closeSubpath()
+                    drawing.fill(needle, with: .color(CompassTheme.vermilion.swiftUI().opacity(0.85)))
+
+                    // The hub sits over the needle's pivot, as on the full dial.
+                    context.fill(
+                        Path(ellipseIn: CGRect(
+                            x: centre.x - metrics.hubRadius,
+                            y: centre.y - metrics.hubRadius,
+                            width: metrics.hubRadius * 2,
+                            height: metrics.hubRadius * 2
+                        )),
+                        with: .color(CompassTheme.brassDark.swiftUI())
+                    )
+                }
+            }
+        }
     }
 }

@@ -132,7 +132,7 @@ struct LibraryTabView: View {
                             )
                             .transition(.asymmetric(
                                 insertion: .opacity.combined(with: .offset(y: -12)),
-                                removal: .opacity.combined(with: .offset(x: 40))
+                                removal: .dissolve
                             ))
                         }
                     }
@@ -202,9 +202,9 @@ struct LibraryTabView: View {
 
     private var emptyState: some View {
         VStack(spacing: 14) {
-            MiniDial(filled: false)
+            SearchingDial()
                 .frame(width: 150, height: 150)
-                .opacity(0.55)
+                .opacity(0.8)
             Text("Your dial is empty")
                 .font(Palette.display(22, .semibold))
                 .foregroundStyle(Palette.bone)
@@ -248,9 +248,10 @@ private struct LibraryRow: View {
 
     @State private var hovering = false
     @State private var targeted = false
+    @State private var menuOpen = false
 
     private var sliceIndex: Int { (slot - 1) % RadialLayout.maxSlicesPerPage }
-    private var lit: Bool { hovering || isSelected }
+    private var lit: Bool { hovering || isSelected || menuOpen }
 
     var body: some View {
         HStack(spacing: 20) {
@@ -284,23 +285,21 @@ private struct LibraryRow: View {
             HStack(spacing: 2) {
                 IconButton(systemName: "arrow.up.right", help: "Open in \(browserName)", action: onOpen)
                 IconButton(systemName: "pencil", help: "Edit", action: onEdit)
-                Menu {
-                    Button("Move up") { onMove(-1) }
-                    Button("Move down") { onMove(1) }
-                    Button("Move to slot 1", action: onFront)
-                    Divider()
-                    Button("Remove", role: .destructive, action: onRemove)
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Palette.boneDim)
-                        .frame(width: 36, height: 36)
-                        .contentShape(Rectangle())
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("More")
+                BrassActionMenu(
+                    items: [
+                        BrassMenuItem(title: "Move up", systemImage: "arrow.up") { onMove(-1) },
+                        BrassMenuItem(title: "Move down", systemImage: "arrow.down") { onMove(1) },
+                        BrassMenuItem(title: "Move to slot 1", systemImage: "1.circle", action: onFront),
+                        BrassMenuItem(
+                            title: "Remove",
+                            systemImage: "trash",
+                            destructive: true,
+                            separatorBefore: true,
+                            action: onRemove
+                        ),
+                    ],
+                    isOpen: $menuOpen
+                )
             }
             .opacity(lit ? 1 : 0)
             .offset(x: lit ? 0 : 10)
@@ -325,6 +324,8 @@ private struct LibraryRow: View {
         .scaleEffect(targeted ? 1.015 : 1)
         .offset(y: hovering ? -2 : 0)
         .padding(.bottom, 6)
+        // The open menu hangs below the row, so the row must sit above the ones that follow.
+        .zIndex(menuOpen ? 5 : 0)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: onSelect)

@@ -61,7 +61,7 @@ struct DialTabView: View {
                         .id(aimed.id)
                         .transition(.asymmetric(
                             insertion: .opacity.combined(with: .offset(y: 14)),
-                            removal: .opacity
+                            removal: .dissolve
                         ))
                 } else {
                     introBlock
@@ -75,11 +75,7 @@ struct DialTabView: View {
             .padding(.top, 18)
 
             HStack(spacing: 14) {
-                HStack(spacing: 6) {
-                    ForEach(Array(hotkeyParts.enumerated()), id: \.offset) { _, part in
-                        PhysicalKey(text: part)
-                    }
-                }
+                HotkeyKeycaps(displayName: settings.preferences.hotkey.displayName)
                 Text("opens the dial, anywhere")
                     .font(Palette.display(15, .regular))
                     .foregroundStyle(Palette.boneFaint)
@@ -206,10 +202,6 @@ struct DialTabView: View {
             : "Aim at a wedge to see it. Click one, or press its number, to open it."
     }
 
-    private var hotkeyParts: [String] {
-        KeyParts.split(settings.preferences.hotkey.displayName)
-    }
-
     private static func words(_ count: Int) -> String {
         let names = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
                      "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen"]
@@ -244,11 +236,14 @@ struct DialTabView: View {
     private var compassArea: some View {
         if pageBookmarks.isEmpty {
             VStack(spacing: 14) {
-                MiniDial(filled: false)
+                SearchingDial()
                     .frame(width: 300, height: 300)
-                    .opacity(0.6)
+                    .shadow(color: Color.black.opacity(0.45), radius: 20, y: 14)
                 Text("Nothing on the dial yet")
-                    .font(Palette.display(17, .regular))
+                    .font(Palette.display(20, .semibold))
+                    .foregroundStyle(Palette.bone)
+                Text("Press + to add your first link.")
+                    .font(Palette.display(15, .regular))
                     .foregroundStyle(Palette.boneDim)
             }
         } else {

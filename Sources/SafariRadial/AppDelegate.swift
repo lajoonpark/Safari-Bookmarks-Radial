@@ -75,6 +75,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func registerHotkey(_ spec: HotkeySpec) -> Bool {
         hotkey.register(spec) { [weak self] in
             guard let self else { return }
+            // The on-screen keycaps press along with the real ones.
+            NotificationCenter.default.post(name: .dialHotkeyPressed, object: nil)
             if self.radialController.isOpen {
                 self.radialController.hotkeyWhileOpen()
             } else {
