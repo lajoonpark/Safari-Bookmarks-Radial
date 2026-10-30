@@ -1133,7 +1133,7 @@ extension CompassRenderer {
                 startRadius: radius * 0.06,
                 endCenter: .zero,
                 endRadius: radius * 1.04,
-                options: []
+                options: [.drawsBeforeStartLocation]
             )
         }
 
