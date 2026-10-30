@@ -206,21 +206,8 @@ struct DialTabView: View {
             : "Aim at a wedge to see it. Click one, or press its number, to open it."
     }
 
-    /// Modifier symbols become their own keys; whatever follows is one more.
     private var hotkeyParts: [String] {
-        let name = settings.preferences.hotkey.displayName
-        let modifiers: Set<Character> = ["⌘", "⌃", "⌥", "⇧"]
-        var parts: [String] = []
-        var rest = ""
-        for character in name {
-            if modifiers.contains(character) && rest.isEmpty {
-                parts.append(String(character))
-            } else {
-                rest.append(character)
-            }
-        }
-        if !rest.isEmpty { parts.append(rest) }
-        return parts
+        KeyParts.split(settings.preferences.hotkey.displayName)
     }
 
     private static func words(_ count: Int) -> String {

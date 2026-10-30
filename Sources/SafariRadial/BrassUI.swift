@@ -565,3 +565,85 @@ private struct DropdownRow: View {
         .motion(Motion.snap, value: hovering)
     }
 }
+
+// MARK: - Fields and badges
+
+extension View {
+    /// The text-field surface: a dark well that glows orange when focused, red when it has a problem.
+    func brassField(focused: Bool, error: Bool = false, height: CGFloat = 46) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        let accent = error ? Palette.alarm : Palette.signal
+        let active = focused || error
+        return self
+            .padding(.horizontal, 14)
+            .frame(height: height)
+            .background(shape.fill(Palette.void))
+            .overlay(shape.strokeBorder(active ? accent : Palette.rim, lineWidth: active ? 1.5 : 1))
+            .shadow(color: accent.opacity(active ? 0.22 : 0), radius: 12)
+            .motion(Motion.spring, value: focused)
+            .motion(Motion.spring, value: error)
+    }
+}
+
+/// Splits a shortcut's display name into one keycap per key: modifiers each get their own, and
+/// whatever follows is the last ("⌃⌘E" becomes ⌃, ⌘, E).
+enum KeyParts {
+    static func split(_ name: String) -> [String] {
+        let modifiers: Set<Character> = ["⌘", "⌃", "⌥", "⇧"]
+        var parts: [String] = []
+        var rest = ""
+        for character in name {
+            if modifiers.contains(character) && rest.isEmpty {
+                parts.append(String(character))
+            } else {
+                rest.append(character)
+            }
+        }
+        if !rest.isEmpty { parts.append(rest) }
+        return parts
+    }
+}
+
+/// A brass plate with a symbol on it: the same object the Import tab's padlock is.
+struct BrassBadge: View {
+    let symbol: String
+    var size: CGFloat = 112
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
+        Image(systemName: symbol)
+            .font(.system(size: size * 0.45, weight: .semibold))
+            .foregroundStyle(Palette.signalInk)
+            .frame(width: size, height: size)
+            .background(shape.fill(Brass.plate))
+            .overlay(shape.strokeBorder(Brass.edge, lineWidth: 0.5))
+            .brassSheen(in: shape)
+            .shadow(color: Color.black.opacity(0.55), radius: 22, y: 14)
+    }
+}
+
+/// A tick that draws itself.
+struct DrawnCheck: View {
+    var tint: Color = Palette.mint
+    var lineWidth: CGFloat = 3.5
+    @State private var drawn = false
+
+    var body: some View {
+        CheckShape()
+            .trim(from: 0, to: drawn ? 1 : 0)
+            .stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+            .onAppear {
+                withAnimation(.easeOut(duration: 0.38).delay(0.12)) { drawn = true }
+            }
+    }
+}
+
+private struct CheckShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX + rect.width * 0.20, y: rect.minY + rect.height * 0.54))
+        path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.42, y: rect.minY + rect.height * 0.74))
+        path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.80, y: rect.minY + rect.height * 0.28))
+        return path
+    }
+}

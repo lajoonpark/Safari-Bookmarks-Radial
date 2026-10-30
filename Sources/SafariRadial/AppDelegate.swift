@@ -357,6 +357,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let window = NSWindow(contentViewController: hosting)
         window.title = "Welcome to Safari Radial"
         window.styleMask = [.titled, .closable, .fullSizeContentView]
+        window.acceptsMouseMovedEvents = true
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isReleasedWhenClosed = false

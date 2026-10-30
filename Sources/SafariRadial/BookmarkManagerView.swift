@@ -71,7 +71,7 @@ struct BookmarkManagerView: View {
         .motion(Motion.springSoft, value: showsComposer)
         .motion(Motion.spring, value: model.syncMessage)
         .sheet(item: $editing) { bookmark in
-            EditBookmarkSheet(bookmark: bookmark) { title, url in
+            EditBookmarkSheet(bookmark: bookmark, slot: model.slotNumber(for: bookmark)) { title, url in
                 model.update(id: bookmark.id, title: title, url: url)
             }
         }
@@ -132,51 +132,82 @@ struct BookmarkManagerView: View {
 /// Title plus link, with live validation. Small enough that a sheet is the right surface.
 struct EditBookmarkSheet: View {
     let bookmark: Bookmark
+    /// Which slot this is, shown as the sheet's eyebrow.
+    var slot: Int?
     let onSave: (String, String) -> String?
 
     @Environment(\.dismiss) private var dismiss
     @State private var title: String
     @State private var url: String
     @State private var error: String?
+    @FocusState private var focus: Field?
 
-    init(bookmark: Bookmark, onSave: @escaping (String, String) -> String?) {
+    private enum Field { case name, link }
+
+    init(bookmark: Bookmark, slot: Int? = nil, onSave: @escaping (String, String) -> String?) {
         self.bookmark = bookmark
+        self.slot = slot
         self.onSave = onSave
         _title = State(initialValue: bookmark.title)
         _url = State(initialValue: bookmark.url)
     }
 
     private var isValid: Bool { Bookmark.normalizedURL(url) != nil }
+    private var showsInvalid: Bool { !url.isEmpty && !isValid }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(slot.map { "SLOT \($0)" } ?? "EDIT")
+                    .font(Palette.mono(11, .semibold))
+                    .tracking(1.8)
+                    .foregroundStyle(Palette.signal)
                 Text("Edit slot")
-                    .font(Palette.display(16, .semibold))
+                    .font(Palette.display(30, .semibold))
+                    .tracking(-0.5)
                     .foregroundStyle(Palette.bone)
                 Text(bookmark.host.isEmpty ? bookmark.url : bookmark.host)
-                    .font(Palette.mono(10))
+                    .font(Palette.mono(12.5))
                     .foregroundStyle(Palette.boneFaint)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
 
-            field("Name", placeholder: "Shown on the dial", text: $title)
-            field("Link", placeholder: "https://…", text: $url)
+            field("NAME") {
+                TextField("", text: $title, prompt: hint("Shown on the dial"))
+                    .textFieldStyle(.plain)
+                    .font(Palette.display(16, .regular))
+                    .foregroundStyle(Palette.bone)
+                    .focused($focus, equals: .name)
+                    .brassField(focused: focus == .name)
+            }
 
-            if !url.isEmpty && !isValid {
+            field("LINK") {
+                TextField("", text: $url, prompt: hint("https://…"))
+                    .textFieldStyle(.plain)
+                    .font(Palette.mono(13.5))
+                    .foregroundStyle(Palette.bone)
+                    .focused($focus, equals: .link)
+                    .brassField(focused: focus == .link, error: showsInvalid || error != nil)
+            }
+
+            if showsInvalid {
                 Text("Needs to be an http or https address.")
-                    .font(Palette.display(10.5, .medium))
+                    .font(Palette.display(13.5, .medium))
                     .foregroundStyle(Palette.alarm)
+                    .transition(.opacity)
             }
             if let error {
                 Text(error)
-                    .font(Palette.display(10.5, .medium))
+                    .font(Palette.display(13.5, .medium))
                     .foregroundStyle(Palette.alarm)
+                    .transition(.opacity)
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 Spacer()
                 Button("Cancel") { dismiss() }
-                    .buttonStyle(QuietButtonStyle())
+                    .buttonStyle(QuietButtonStyle(size: 14))
                     .keyboardShortcut(.cancelAction)
                 Button("Save") {
                     if let message = onSave(title, url) {
@@ -185,28 +216,37 @@ struct EditBookmarkSheet: View {
                         dismiss()
                     }
                 }
-                .buttonStyle(SignalButtonStyle(isEnabled: isValid))
+                .buttonStyle(SignalButtonStyle(isEnabled: isValid, size: 14))
                 .disabled(!isValid)
                 .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(22)
-        .frame(width: 400)
-        .background(Palette.void)
+        .padding(30)
+        .frame(width: 480)
+        .background(
+            ZStack {
+                Palette.voidRaised
+                RadialGradient(
+                    colors: [Palette.signal.opacity(0.10), Color.clear],
+                    center: .top,
+                    startRadius: 0,
+                    endRadius: 280
+                )
+            }
+        )
+        .motion(Motion.spring, value: showsInvalid)
+        .motion(Motion.spring, value: error)
+        .onAppear { focus = .name }
     }
 
-    private func field(_ label: String, placeholder: String, text: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+    private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             Text(label)
-                .font(Palette.mono(9, .medium))
+                .font(Palette.mono(10.5, .semibold))
+                .tracking(1.6)
                 .foregroundStyle(Palette.boneFaint)
-            TextField("", text: text, prompt: hint(placeholder))
-                .textFieldStyle(.plain)
-                .font(Palette.display(12.5, .regular))
-                .foregroundStyle(Palette.bone)
-                .padding(.horizontal, 10)
-                .frame(height: 30)
-                .hullPanel(radius: 7)
+                .padding(.leading, 2)
+            content()
         }
     }
 }

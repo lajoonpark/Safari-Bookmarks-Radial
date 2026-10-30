@@ -15,6 +15,7 @@ struct QuickAddView: View {
     @State private var title = ""
     @State private var error: String?
     @State private var added: SlotToast?
+    @State private var appeared = false
     @FocusState private var focus: Field?
 
     private enum Field { case link, name }
@@ -25,23 +26,43 @@ struct QuickAddView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        ZStack {
             if let added {
                 confirmation(added)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
             } else {
                 form
+                    .transition(.opacity)
             }
         }
-        .frame(width: 420)
-        .background(Palette.void)
+        .frame(width: 480)
+        .background(
+            ZStack {
+                Palette.void
+                RadialGradient(
+                    colors: [Palette.signal.opacity(0.14), Color.clear],
+                    center: .top,
+                    startRadius: 0,
+                    endRadius: 300
+                )
+            }
+        )
         .overlay(alignment: .top) {
             Rectangle()
-                .fill(added == nil ? Palette.signal : Palette.mint)
+                .fill(LinearGradient(
+                    colors: [Color.clear, added == nil ? Palette.signal : Palette.mint, Color.clear],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ))
                 .frame(height: 2)
-                .animation(.easeOut(duration: 0.18), value: added == nil)
         }
+        // The panel arrives the way the dial does: set down, with a little give.
+        .scaleEffect(appeared ? 1 : 0.94)
+        .opacity(appeared ? 1 : 0)
+        .motion(Motion.springSoft, value: added)
         .onExitCommand(perform: onClose)
         .onAppear {
+            withAnimation(Motion.springSoft) { appeared = true }
             // The clipboard is the reason this panel exists, so use it before asking.
             if let pasted = QuickAddView.linkFromClipboard(), url.isEmpty {
                 url = pasted
@@ -56,28 +77,27 @@ struct QuickAddView: View {
     // MARK: - Form
 
     private var form: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("New slot")
-                    .font(Palette.display(15, .semibold))
-                    .foregroundStyle(Palette.bone)
-                Spacer()
-                Text("next slot · page \(nextSlotPage)")
-                    .font(Palette.mono(9.5, .medium))
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("NEXT SLOT · PAGE \(nextSlotPage)")
+                    .font(Palette.mono(11, .semibold))
+                    .tracking(1.8)
                     .foregroundStyle(Palette.boneFaint)
+                Text("New slot")
+                    .font(Palette.display(30, .semibold))
+                    .tracking(-0.5)
+                    .foregroundStyle(Palette.bone)
             }
 
-            VStack(alignment: .leading, spacing: 5) {
-                Text("LINK")
-                    .font(Palette.mono(9, .medium))
-                    .foregroundStyle(Palette.boneFaint)
+            VStack(alignment: .leading, spacing: 8) {
+                fieldLabel("LINK")
                 HStack(spacing: 0) {
                     Text("https://")
-                        .font(Palette.mono(12.5))
+                        .font(Palette.mono(13.5))
                         .foregroundStyle(Palette.boneFaint)
                     TextField("", text: $url, prompt: hint("paste a link, or type a domain"))
                         .textFieldStyle(.plain)
-                        .font(Palette.mono(12.5))
+                        .font(Palette.mono(13.5))
                         .foregroundStyle(Palette.bone)
                         .focused($focus, equals: .link)
                         .onSubmit(commit)
@@ -85,52 +105,49 @@ struct QuickAddView: View {
                             if error != nil { error = nil }
                         }
                 }
-                .padding(.horizontal, 10)
-                .frame(height: 34)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Palette.hull)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .strokeBorder(error == nil ? Palette.rim : Palette.alarm, lineWidth: 1)
-                )
+                .brassField(focused: focus == .link, error: error != nil)
             }
 
-            VStack(alignment: .leading, spacing: 5) {
-                Text("DIAL LABEL")
-                    .font(Palette.mono(9, .medium))
-                    .foregroundStyle(Palette.boneFaint)
-                TextField("", text: $title, prompt: hint("Optional — defaults to the domain"))
+            VStack(alignment: .leading, spacing: 8) {
+                fieldLabel("DIAL LABEL")
+                TextField("", text: $title, prompt: hint("Optional. Defaults to the domain"))
                     .textFieldStyle(.plain)
-                    .font(Palette.display(12.5, .regular))
+                    .font(Palette.display(16, .regular))
                     .foregroundStyle(Palette.bone)
                     .focused($focus, equals: .name)
                     .onSubmit(commit)
-                    .padding(.horizontal, 10)
-                    .frame(height: 32)
-                    .hullPanel(radius: 7)
+                    .brassField(focused: focus == .name)
             }
 
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(Palette.display(11, .medium))
+                    .font(Palette.display(13.5, .medium))
                     .foregroundStyle(Palette.alarm)
-                    .transition(.opacity)
+                    .transition(.opacity.combined(with: .offset(y: -4)))
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 Spacer()
                 Button("Cancel", action: onClose)
-                    .buttonStyle(QuietButtonStyle())
+                    .buttonStyle(QuietButtonStyle(size: 14))
                     .keyboardShortcut(.cancelAction)
                 Button("Add to dial", action: commit)
-                    .buttonStyle(SignalButtonStyle(isEnabled: canCommit))
+                    .buttonStyle(SignalButtonStyle(isEnabled: canCommit, size: 14))
                     .disabled(!canCommit)
                     .keyboardShortcut(.defaultAction)
             }
+            .padding(.top, 2)
         }
-        .padding(20)
-        .animation(.spring(response: 0.3, dampingFraction: 0.84), value: error)
+        .padding(28)
+        .motion(Motion.spring, value: error)
+    }
+
+    private func fieldLabel(_ text: String) -> some View {
+        Text(text)
+            .font(Palette.mono(10.5, .semibold))
+            .tracking(1.6)
+            .foregroundStyle(Palette.boneFaint)
+            .padding(.leading, 2)
     }
 
     private var canCommit: Bool {
@@ -145,21 +162,19 @@ struct QuickAddView: View {
         let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         if let failure = model.add(title: title, url: trimmed) {
-            withAnimation { error = failure }
+            error = failure
             focus = .link
             return
         }
         // `model.add` reloads, so the new count is the slot the bookmark just landed in.
-        withAnimation(.spring(response: 0.34, dampingFraction: 0.78)) {
-            added = SlotToast(
-                slot: model.store.count,
-                title: title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? (Bookmark.normalizedURL(trimmed)?.host ?? trimmed)
-                    : title
-            )
-        }
+        added = SlotToast(
+            slot: model.store.count,
+            title: title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? (Bookmark.normalizedURL(trimmed)?.host ?? trimmed)
+                : title
+        )
         // Long enough to read, short enough not to feel like a dialog.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
             onClose()
         }
     }
@@ -167,29 +182,36 @@ struct QuickAddView: View {
     // MARK: - Confirmation
 
     private func confirmation(_ toast: SlotToast) -> some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 20) {
             ZStack {
                 Circle()
-                    .fill(Palette.mint.opacity(0.16))
-                Image(systemName: "checkmark")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(Palette.mint)
+                    .fill(Palette.mint.opacity(0.14))
+                Circle()
+                    .strokeBorder(Palette.mint.opacity(0.5), lineWidth: 1.5)
+                DrawnCheck(tint: Palette.mint, lineWidth: 4)
+                    .frame(width: 30, height: 30)
             }
-            .frame(width: 34, height: 34)
+            .frame(width: 64, height: 64)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Added to slot \(toast.slot)")
-                    .font(Palette.display(13.5, .semibold))
-                    .foregroundStyle(Palette.bone)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("SLOT \(toast.slot)")
+                    .font(Palette.mono(11, .semibold))
+                    .tracking(1.8)
+                    .foregroundStyle(Palette.mint)
                 Text(toast.title)
-                    .font(Palette.mono(11))
-                    .foregroundStyle(Palette.boneDim)
+                    .font(Palette.display(26, .semibold))
+                    .tracking(-0.4)
+                    .foregroundStyle(Palette.bone)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                Text("is on the dial")
+                    .font(Palette.display(15, .regular))
+                    .foregroundStyle(Palette.boneDim)
             }
             Spacer()
         }
-        .padding(20)
-        .transition(.opacity.combined(with: .move(edge: .top)))
+        .padding(28)
+        .frame(height: 124)
     }
 
     // MARK: - Clipboard
@@ -221,7 +243,7 @@ final class QuickAddPanel: NSWindow {
 
     init(content: NSViewController) {
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 240),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 330),
             styleMask: [.titled, .fullSizeContentView, .closable],
             backing: .buffered,
             defer: false

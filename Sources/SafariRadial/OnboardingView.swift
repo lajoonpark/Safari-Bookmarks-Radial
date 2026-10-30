@@ -4,74 +4,90 @@ import RadialCore
 
 /// First run, three steps.
 ///
+/// This is the first thing anyone sees of the app, so it shows the instrument rather than
+/// describing it: the live compass sits beside the words and answers the pointer from the first
+/// frame.
+///
 /// The middle step exists because Safari import genuinely needs Full Disk Access and that is
 /// the kind of permission request people abandon an app over. So it is offered as an explicit
-/// choice, with the cost of skipping stated plainly: the app is complete without it.
+/// choice, with the cost of skipping it stated plainly: the app is complete without it.
 struct OnboardingView: View {
     @ObservedObject var model: OnboardingModel
 
+    @State private var tracker = PointerTracker()
+
     var body: some View {
-        VStack(spacing: 0) {
-            TopBar(step: model.step)
+        ZStack {
+            LeatherBackground(tracker: tracker)
+
             HStack(spacing: 0) {
                 art
+                    .frame(width: 400)
                 content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             }
-            .frame(height: 372)
-            Rectangle().fill(Palette.rim).frame(height: 1)
-            footer
+            .padding(.top, 30)
         }
-        .background(Palette.void)
-        .frame(width: 760)
+        .frame(width: 960, height: 620)
+        .onAppear { tracker.start() }
+        .onDisappear { tracker.stop() }
+        .motion(Motion.springSoft, value: model.step)
     }
 
     // MARK: - Art
 
+    @ViewBuilder
     private var art: some View {
         ZStack {
-            LinearGradient(
-                colors: [Palette.voidRaised, Palette.void],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            RadialGradient(
-                colors: [Palette.signal.opacity(0.10), Color.clear],
-                center: .init(x: 0.5, y: 0.32),
-                startRadius: 8,
-                endRadius: 160
-            )
-            Group {
-                switch model.step {
-                case .welcome: WelcomeMark()
-                case .safari: SafariMark()
-                case .ready: ReadyMark()
+            switch model.step {
+            case .welcome, .ready:
+                // The same instrument on both ends: first as a demonstration, last as the real
+                // thing, with your own slots on it if you have any.
+                LiveCompass(
+                    bookmarks: model.dialBookmarks,
+                    page: 0,
+                    paging: RadialPaging(total: model.dialBookmarks.count),
+                    showsNumbers: true,
+                    radius: 200
+                )
+                .id(model.step)
+                .transition(.opacity.combined(with: .scale(scale: 0.94)))
+            case .safari:
+                VStack(spacing: 22) {
+                    BrassBadge(symbol: "safari.fill", size: 132)
+                    Text("OPTIONAL")
+                        .font(Palette.mono(11, .semibold))
+                        .tracking(2.2)
+                        .foregroundStyle(Palette.boneFaint)
                 }
+                .transition(.opacity.combined(with: .scale(scale: 0.94)))
             }
-            .transition(.opacity.combined(with: .scale(scale: 0.94)))
-            .animation(.spring(response: 0.45, dampingFraction: 0.8), value: model.step)
         }
-        .frame(width: 252)
-        .overlay(alignment: .trailing) {
-            Rectangle().fill(Palette.rim).frame(width: 1)
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Content
 
-    @ViewBuilder
     private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
+            Spacer(minLength: 0)
+
             Text(model.step.eyebrow)
-                .font(Palette.mono(9.5, .medium))
+                .font(Palette.mono(11, .semibold))
+                .tracking(1.8)
                 .foregroundStyle(Palette.signal)
-                .tracking(0.8)
 
             Text(model.step.title)
-                .font(Palette.display(24, .semibold))
+                .font(Palette.display(46, .semibold))
+                .tracking(-0.9)
                 .foregroundStyle(Palette.bone)
-                .tracking(-0.3)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 9)
+                .padding(.top, 14)
+                .id(model.step)
+                .transition(.asymmetric(
+                    insertion: .opacity.combined(with: .offset(y: 14)),
+                    removal: .opacity
+                ))
 
             Group {
                 switch model.step {
@@ -80,84 +96,86 @@ struct OnboardingView: View {
                 case .ready: readyCopy
                 }
             }
-            .padding(.top, 12)
-
-            Spacer(minLength: 12)
+            .id(model.step)
+            .transition(.opacity)
+            .padding(.top, 20)
 
             actions
+                .padding(.top, 34)
+
+            Spacer(minLength: 0)
+
+            footer
         }
-        .padding(.horizontal, 30)
-        .padding(.top, 26)
-        .padding(.bottom, 22)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 20)
+        .padding(.trailing, 56)
+        .padding(.bottom, 26)
     }
 
     private var welcomeCopy: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            paragraph(
-                "Every bookmark you actually use, on one ring, at your cursor. Press the shortcut anywhere and the dial appears where your pointer already is, so nothing moves."
-            )
-            HStack(spacing: 6) {
-                KeyCap(text: model.hotkeyDisplay)
+        VStack(alignment: .leading, spacing: 18) {
+            paragraph("Every bookmark you actually use, on one ring, at your cursor. Press the shortcut anywhere and the dial appears where your pointer already is, so nothing moves.")
+            HStack(spacing: 14) {
+                HStack(spacing: 6) {
+                    ForEach(Array(KeyParts.split(model.hotkeyDisplay).enumerated()), id: \.offset) { _, part in
+                        PhysicalKey(text: part)
+                    }
+                }
                 Text("opens the dial")
-                    .font(Palette.display(11.5, .regular))
+                    .font(Palette.display(16, .regular))
                     .foregroundStyle(Palette.boneDim)
             }
-            paragraph(
-                "Then press 1–9, or click a wedge. Esc closes it without opening anything.",
-                dim: true
-            )
+            paragraph("Then press 1–9, or click a wedge. Esc closes it without opening anything. Try hovering the compass.", dim: true)
         }
     }
 
     private var safariCopy: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            paragraph(
-                "Safari stores bookmarks in a system-protected file. Reading it needs Full Disk Access. You can grant it now, or skip it and never think about it again."
-            )
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 18) {
+            paragraph("Safari stores bookmarks in a system-protected file. Reading it needs Full Disk Access. You can grant it now, or skip it and never think about it again.")
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Full Disk Access is optional")
-                    .font(Palette.display(12, .semibold))
+                    .font(Palette.display(16, .semibold))
                     .foregroundStyle(Palette.bone)
-                Text("Adding links by hand, reordering, the shortcut, and every setting work exactly the same without it. It only switches on this one import button.")
-                    .font(Palette.display(11, .regular))
+                Text("Adding links by hand, reordering, the shortcut, and every setting work exactly the same without it. It only switches on the Import tab.")
+                    .font(Palette.display(14.5, .regular))
+                    .lineSpacing(2)
                     .foregroundStyle(Palette.boneDim)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.leading, 12)
+            .padding(.leading, 16)
             .overlay(alignment: .leading) {
-                Rectangle().fill(Palette.signal).frame(width: 2)
+                Capsule().fill(Palette.signal).frame(width: 3)
             }
         }
     }
 
     private var readyCopy: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 20) {
             paragraph(model.hasBookmarks
                 ? "Your dial is ready. Press the shortcut anywhere to open it, then a number to fire a slot."
-                : "Your dial is ready and empty — that is fine. Add links in the main window, or import from Safari later if you change your mind."
+                : "Your dial is ready and empty, which is fine. Add links in the main window, or import from Safari later if you change your mind."
             )
-            HStack(spacing: 14) {
+            HStack(spacing: 22) {
                 tip("Esc", "closes")
-                tip("← →", "page")
-                tip("1–9", "open")
+                tip("← →", "turn the page")
+                tip("1–9", "open a slot")
             }
         }
     }
 
     private func tip(_ key: String, _ label: String) -> some View {
-        HStack(spacing: 5) {
-            KeyCap(text: key, compact: true)
+        HStack(spacing: 8) {
+            KeyCap(text: key)
             Text(label)
-                .font(Palette.display(10.5, .regular))
+                .font(Palette.display(14, .regular))
                 .foregroundStyle(Palette.boneFaint)
         }
     }
 
     private func paragraph(_ text: String, dim: Bool = false) -> some View {
         Text(text)
-            .font(Palette.display(12.5, .regular))
-            .lineSpacing(3)
+            .font(Palette.display(17.5, .regular))
+            .lineSpacing(4)
             .foregroundStyle(dim ? Palette.boneFaint : Palette.boneDim)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -165,246 +183,58 @@ struct OnboardingView: View {
     // MARK: - Actions
 
     private var actions: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 12) {
             switch model.step {
             case .welcome:
                 Button("Show me the dial") { model.advance() }
-                    .buttonStyle(SignalButtonStyle())
+                    .buttonStyle(SignalButtonStyle(size: 16))
                 Button("Skip") { model.finish() }
-                    .buttonStyle(QuietButtonStyle(tint: Palette.boneDim))
+                    .buttonStyle(QuietButtonStyle(tint: Palette.boneDim, size: 16))
             case .safari:
                 Button("Open Full Disk Access") { model.requestFullDiskAccess() }
-                    .buttonStyle(SignalButtonStyle())
+                    .buttonStyle(SignalButtonStyle(size: 16))
                 Button("Not now") { model.advance() }
-                    .buttonStyle(QuietButtonStyle())
+                    .buttonStyle(QuietButtonStyle(size: 16))
             case .ready:
                 Button("Start using it") { model.finish() }
-                    .buttonStyle(SignalButtonStyle())
+                    .buttonStyle(SignalButtonStyle(size: 16))
             }
-            Spacer()
-            StepPips(step: model.step)
         }
     }
 
     private var footer: some View {
-        HStack {
+        HStack(spacing: 16) {
+            StepPips(step: model.step)
             Text(model.step.footerHint)
-                .font(Palette.display(10.5, .regular))
+                .font(Palette.display(13.5, .regular))
                 .foregroundStyle(Palette.boneFaint)
             Spacer()
             if model.step != .welcome {
                 Button("Back") { model.goBack() }
-                    .buttonStyle(QuietButtonStyle(tint: Palette.boneDim))
+                    .buttonStyle(QuietButtonStyle(tint: Palette.boneDim, size: 13))
             }
         }
-        .padding(.horizontal, 22)
-        .frame(height: 46)
     }
 }
 
 // MARK: - Chrome
 
-private struct TopBar: View {
-    let step: OnboardingStep
-
-    var body: some View {
-        HStack(spacing: 7) {
-            // Real traffic lights live above this in the window's title bar; these are only
-            // a hint that this is a window, so they stay subtle and inert.
-            ForEach(0..<3, id: \.self) { _ in
-                Circle().fill(Palette.bone.opacity(0.10)).frame(width: 8, height: 8)
-            }
-            Spacer()
-            Text(step.windowTitle)
-                .font(Palette.display(11, .medium))
-                .foregroundStyle(Palette.boneFaint)
-            Spacer()
-            Circle().fill(Color.clear).frame(width: 8, height: 8)
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 34)
-        .background(Palette.chromeTop)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Palette.rim).frame(height: 1)
-        }
-    }
-}
-
+/// Three brass pips: the current step stretches into a lit capsule.
 private struct StepPips: View {
     let step: OnboardingStep
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             ForEach(OnboardingStep.allCases, id: \.self) { candidate in
+                let current = candidate == step
                 Capsule()
-                    .fill(candidate.rawValue <= step.rawValue ? Palette.signal : Palette.bone.opacity(0.15))
-                    .frame(width: 20, height: 3)
+                    .fill(current ? Palette.signal : (candidate.rawValue < step.rawValue ? Palette.signal.opacity(0.45) : Palette.rimStrong))
+                    .frame(width: current ? 26 : 8, height: 8)
+                    .shadow(color: Palette.signal.opacity(current ? 0.6 : 0), radius: 6)
             }
         }
-        .animation(.spring(response: 0.34, dampingFraction: 0.82), value: step)
+        .motion(Motion.spring, value: step)
     }
-}
-
-// MARK: - Art marks
-
-/// Step 1: the compass itself, lid open. The product's whole idea in one object.
-private struct WelcomeMark: View {
-    var body: some View {
-        GeometryReader { proxy in
-            let side = min(proxy.size.width, proxy.size.height)
-            Canvas { context, size in
-                let metrics = CompassMetrics(cardRadius: side * 0.20)
-                let lid = CompassLid(metrics: metrics, openness: 1)
-                let camera = CompassCamera.level
-                let centre = CGPoint(x: size.width / 2, y: size.height / 2 + metrics.caseRadius * 0.34)
-
-                func screen(_ point: Point3D) -> CGPoint {
-                    let projected = camera.project(point).point
-                    return CGPoint(x: centre.x + projected.x, y: centre.y + projected.y)
-                }
-
-                func ringPath(_ radius: CGFloat, lid: CompassLid? = nil) -> Path {
-                    var path = Path()
-                    for step in 0...72 {
-                        let angle = CGFloat(step) / 72 * 2 * .pi
-                        let flat = Point3D(radius: radius, angle: angle)
-                        let point = lid.map { screen($0.swing(flat)) } ?? screen(flat)
-                        step == 0 ? path.move(to: point) : path.addLine(to: point)
-                    }
-                    path.closeSubpath()
-                    return path
-                }
-
-                // Lid, standing open behind the case.
-                context.fill(ringPath(metrics.lidRadius, lid: lid), with: .color(CompassTheme.brassMid.swiftUI()))
-                context.stroke(ringPath(metrics.lidRadius, lid: lid),
-                               with: .color(CompassTheme.brassDeep.swiftUI(alpha: 0.55)), lineWidth: 1)
-
-                // Case and card.
-                context.fill(ringPath(metrics.caseRadius), with: .color(CompassTheme.brassLit.swiftUI()))
-                context.fill(ringPath(metrics.cardRadius), with: .color(CompassTheme.paper.swiftUI()))
-
-                // A few printed degrees, so it reads as a card rather than a disc.
-                for degrees in stride(from: 0, to: 360, by: 15) {
-                    let angle = CGFloat(degrees) * .pi / 180
-                    var tick = Path()
-                    tick.move(to: screen(Point3D(radius: metrics.scaleInset * 1.02, angle: angle)))
-                    tick.addLine(to: screen(Point3D(radius: metrics.scaleOutset, angle: angle)))
-                    context.stroke(tick, with: .color(CompassTheme.inkRule.swiftUI(alpha: 0.45)), lineWidth: 0.9)
-                }
-
-                // Sectors, with one aimed at.
-                let card = RadialLayout(
-                    sliceCount: 8,
-                    centerRadius: metrics.hubRadius,
-                    outerRadius: metrics.sectorOutset
-                )
-                for index in 0..<8 {
-                    let drawn = card.drawableRange(of: index, inset: card.step * 0.06)
-                    var wedge = Path()
-                    let steps = 8
-                    for step in 0...steps {
-                        let angle = drawn.start + drawn.sweep * CGFloat(step) / CGFloat(steps)
-                        let point = screen(Point3D(radius: metrics.sectorOutset, angle: angle))
-                        step == 0 ? wedge.move(to: point) : wedge.addLine(to: point)
-                    }
-                    for step in stride(from: steps, through: 0, by: -1) {
-                        let angle = drawn.start + drawn.sweep * CGFloat(step) / CGFloat(steps)
-                        wedge.addLine(to: screen(Point3D(radius: metrics.sectorInset, angle: angle)))
-                    }
-                    wedge.closeSubpath()
-                    let lit = index == 1
-                    if lit {
-                        context.fill(wedge, with: .color(CompassTheme.vermilion.swiftUI(alpha: 0.16)))
-                    }
-                    context.stroke(wedge, with: .color(CompassTheme.inkRule.swiftUI(alpha: 0.35)), lineWidth: 0.9)
-                }
-
-                // Needle, on the aimed slot.
-                var needle = Path()
-                let bearing = card.centerAngle(of: 1)
-                needle.move(to: screen(Point3D(radius: metrics.cardRadius * 0.74, angle: bearing)))
-                needle.addLine(to: screen(Point3D(radius: -metrics.cardRadius * 0.56, angle: bearing + .pi / 2)))
-                needle.addLine(to: screen(Point3D(radius: -metrics.cardRadius * 0.56, angle: bearing - .pi / 2)))
-                needle.closeSubpath()
-                context.fill(needle, with: .color(CompassTheme.vermilion.swiftUI()))
-
-                // Hub.
-                context.fill(ringPath(metrics.hubRadius), with: .color(CompassTheme.brassDark.swiftUI()))
-                context.fill(
-                    Path(ellipseIn: CGRect(
-                        x: centre.x - metrics.cardRadius * 0.028,
-                        y: centre.y - metrics.cardRadius * 0.028,
-                        width: metrics.cardRadius * 0.056,
-                        height: metrics.cardRadius * 0.056
-                    )),
-                    with: .color(CompassTheme.hubWindowInk.swiftUI())
-                )
-            }
-            .frame(width: side, height: side)
-        }
-    }
-}
-
-/// Step 2: a shield, because the step is about a permission — and a lock that is deliberately
-/// open at the bottom, since the app does not need it.
-private struct SafariMark: View {
-    var body: some View {
-        VStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .strokeBorder(Palette.bone.opacity(0.10), lineWidth: 1)
-                    .frame(width: 104, height: 104)
-                Circle()
-                    .strokeBorder(Palette.signal.opacity(0.34), lineWidth: 1)
-                    .frame(width: 74, height: 74)
-                Image(systemName: "safari.fill")
-                    .font(.system(size: 34, weight: .light))
-                    .foregroundStyle(Palette.signal)
-            }
-            Text("safari")
-                .font(Palette.mono(10, .medium))
-                .foregroundStyle(Palette.boneFaint)
-                .tracking(1)
-        }
-    }
-}
-
-/// Step 3: nine slots, filled. The thing you are about to use.
-private struct ReadyMark: View {
-    var body: some View {
-        VStack(spacing: 10) {
-            ForEach(0..<3, id: \.self) { row in
-                HStack(spacing: 6) {
-                    ForEach(0..<3, id: \.self) { column in
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .fill(index(row, column) == 0
-                                ? Palette.signal.opacity(0.26)
-                                : Palette.bone.opacity(0.06))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                    .strokeBorder(
-                                        index(row, column) == 0
-                                            ? Palette.signal.opacity(0.8)
-                                            : Palette.bone.opacity(0.12),
-                                        lineWidth: 1
-                                    )
-                            )
-                            .frame(width: 34, height: 26)
-                            .overlay(
-                                Text("\(index(row, column) + 1)")
-                                    .font(Palette.mono(9.5, .medium))
-                                    .foregroundStyle(index(row, column) == 0
-                                        ? Palette.signal
-                                        : Palette.boneFaint)
-                            )
-                    }
-                }
-            }
-        }
-    }
-
-    private func index(_ row: Int, _ column: Int) -> Int { row * 3 + column }
 }
 
 // MARK: - Step model
@@ -453,6 +283,21 @@ final class OnboardingModel: ObservableObject {
 
     let hotkeyDisplay: String
     private let environment: AppEnvironment
+
+    /// Stand-ins for a first run with nothing on the dial, so the compass has something to show.
+    /// Never saved: they exist only on this screen.
+    private static let demo: [Bookmark] = [
+        ("Mail", "mail.example.com"), ("Calendar", "calendar.example.com"),
+        ("Notes", "notes.example.com"), ("Music", "music.example.com"),
+        ("News", "news.example.com"), ("Maps", "maps.example.com"),
+        ("Photos", "photos.example.com"), ("Docs", "docs.example.com"),
+    ].map { Bookmark(title: $0.0, url: "https://\($0.1)") }
+
+    /// Your own first page when you have one, the demonstration page when you do not.
+    var dialBookmarks: [Bookmark] {
+        let real = Array(environment.store.bookmarks.prefix(RadialLayout.maxSlicesPerPage))
+        return real.isEmpty ? OnboardingModel.demo : real
+    }
     var onFinish: (() -> Void)?
 
     init(environment: AppEnvironment, hotkey: HotkeySpec, hasBookmarks: Bool) {
