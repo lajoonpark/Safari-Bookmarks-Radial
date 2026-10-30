@@ -843,7 +843,7 @@ extension CompassRenderer {
                 let t = from + (to - from) * CGFloat(step) / 40
                 arc.append(state.camera.project(
                     x: outer * 0.975 * sin(t * .pi), y: -outer * 0.975 * cos(t * .pi), z: 0
-                ).point)
+                ))
             }
             context.saveGState()
             context.setLineCap(.round)
