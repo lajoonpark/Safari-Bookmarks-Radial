@@ -30,6 +30,7 @@ struct SettingsView: View {
 
                     shortcutCard
                     openingCard
+                        .zIndex(1)
                     dialCard
                     startupCard
                     aboutLine
@@ -216,40 +217,20 @@ struct SettingsView: View {
         }
     }
 
-    /// The stock macOS pop-up is blue and out of place here, so the menu is drawn as a brass-edged
-    /// field. The choices themselves are still a native menu.
+    /// A brass dropdown rather than the system pop-up, which cannot be restyled.
     private var browserMenu: some View {
-        Menu {
-            ForEach(model.installedBrowsers) { browser in
-                Button {
-                    model.setBrowser(browser)
-                } label: {
-                    if browser.bundleID == model.preferences.browserBundleID {
-                        Label(browser.name, systemImage: "checkmark")
-                    } else {
-                        Text(browser.name)
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 10) {
-                Text(model.preferences.browser.name)
-                    .font(Palette.display(15, .medium))
-                    .foregroundStyle(Palette.bone)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Palette.boneDim)
-            }
-            .padding(.horizontal, 14)
-            .frame(height: 38)
-            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Palette.void))
-            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Palette.rim, lineWidth: 1))
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .liftOnHover(1.5)
+        let names = Dictionary(
+            model.installedBrowsers.map { ($0.bundleID, $0.name) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return BrassDropdown(
+            options: model.installedBrowsers.map(\.bundleID),
+            title: { names[$0] ?? $0 },
+            selection: Binding(
+                get: { model.preferences.browserBundleID },
+                set: { model.setBrowser(Browser.browser(forBundleID: $0)) }
+            )
+        )
     }
 
     /// One sentence describing exactly what will happen, naming the browser.

@@ -461,3 +461,107 @@ extension AnyTransition {
         )
     }
 }
+
+/// A pop-up menu drawn in brass. The system menu cannot be restyled on macOS, so this is a
+/// field that opens a list of its own.
+///
+/// The host must raise whatever contains it (`.zIndex`), or later siblings paint over the list.
+struct BrassDropdown<Option: Hashable>: View {
+    let options: [Option]
+    let title: (Option) -> String
+    @Binding var selection: Option
+    @State private var open = false
+
+    var body: some View {
+        Button {
+            withAnimation(Motion.spring) { open.toggle() }
+        } label: {
+            HStack(spacing: 10) {
+                Text(title(selection))
+                    .font(Palette.display(15, .medium))
+                    .foregroundStyle(Palette.bone)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(open ? Palette.signal : Palette.boneDim)
+                    .rotationEffect(.degrees(open ? 180 : 0))
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 38)
+            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Palette.void))
+            .overlay(
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .strokeBorder(open ? Palette.signal : Palette.rim, lineWidth: open ? 1.5 : 1)
+            )
+            .shadow(color: Palette.signal.opacity(open ? 0.2 : 0), radius: 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .liftOnHover(1.5)
+        .overlay(alignment: .topTrailing) {
+            if open {
+                ZStack(alignment: .topTrailing) {
+                    // Clicking anywhere else closes the list.
+                    Color.clear
+                        .frame(width: 3000, height: 3000)
+                        .contentShape(Rectangle())
+                        .onTapGesture { withAnimation(Motion.spring) { open = false } }
+                    list
+                        .offset(y: 46)
+                }
+                .transition(.scale(scale: 0.92, anchor: .topTrailing).combined(with: .opacity))
+            }
+        }
+    }
+
+    private var list: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(options, id: \.self) { option in
+                DropdownRow(title: title(option), selected: option == selection) {
+                    withAnimation(Motion.spring) {
+                        selection = option
+                        open = false
+                    }
+                }
+            }
+        }
+        .padding(6)
+        .frame(minWidth: 190)
+        .fixedSize()
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Palette.voidRaised))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Palette.rimStrong, lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.6), radius: 26, y: 14)
+    }
+}
+
+private struct DropdownRow: View {
+    let title: String
+    let selected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Palette.signal)
+                    .opacity(selected ? 1 : 0)
+                    .frame(width: 14)
+                Text(title)
+                    .font(Palette.display(15, selected ? .semibold : .regular))
+                    .foregroundStyle(Palette.bone)
+                Spacer(minLength: 8)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(hovering ? Palette.signal.opacity(0.16) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .motion(Motion.snap, value: hovering)
+    }
+}
