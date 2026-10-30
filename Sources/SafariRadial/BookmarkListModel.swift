@@ -103,6 +103,12 @@ final class BookmarkListModel: ObservableObject {
         reload()
     }
 
+    /// Drag-to-reorder: `id` takes the slot `target` holds, and the rows between shift to close the gap.
+    func move(_ id: UUID, ontoSlotOf target: UUID) {
+        guard store.move(id: id, ontoSlotOf: target) else { return }
+        reload()
+    }
+
     /// Promotes an entry to slot 1. Cheap in the UI, and the only reorder people ask for.
     func moveToFront(_ bookmark: Bookmark) {
         guard let index = bookmarks.firstIndex(where: { $0.id == bookmark.id }), index > 0 else { return }

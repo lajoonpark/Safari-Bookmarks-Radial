@@ -132,6 +132,21 @@ public final class BookmarkStore {
         return true
     }
 
+    /// Drops `id` into the slot `target` holds right now.
+    ///
+    /// The dragged entry ends up exactly where it was dropped, and everything between the two
+    /// shifts by one, in whichever direction closes the gap. That is the rule people expect from
+    /// dragging a row onto another row, and it keeps every other slot number as close to where
+    /// it was as a reorder can.
+    @discardableResult
+    public func move(id: UUID, ontoSlotOf target: UUID) -> Bool {
+        guard id != target,
+              let from = bookmarks.firstIndex(where: { $0.id == id }),
+              let to = bookmarks.firstIndex(where: { $0.id == target })
+        else { return false }
+        return move(fromOffsets: IndexSet(integer: from), toOffset: to > from ? to + 1 : to)
+    }
+
     /// Merges an import into the current list.
     ///
     /// - New links are appended in source order, so the first import fills page one.

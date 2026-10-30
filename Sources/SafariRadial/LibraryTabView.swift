@@ -120,6 +120,12 @@ struct LibraryTabView: View {
                                 onFront: {
                                     withAnimation(Motion.springSoft) { model.moveToFront(bookmark) }
                                 },
+                                // Reordering a filtered list would be ambiguous, so it waits for the
+                                // full ledger.
+                                canReorder: showDividers,
+                                onDrop: { dragged in
+                                    withAnimation(Motion.springSoft) { model.move(dragged, ontoSlotOf: bookmark.id) }
+                                },
                                 onRemove: {
                                     withAnimation(Motion.springSoft) { model.remove(bookmark) }
                                 }
@@ -235,15 +241,26 @@ private struct LibraryRow: View {
     let onEdit: () -> Void
     let onMove: (Int) -> Void
     let onFront: () -> Void
+    let canReorder: Bool
+    /// Another row was dropped here; the argument is its id.
+    let onDrop: (UUID) -> Void
     let onRemove: () -> Void
 
     @State private var hovering = false
+    @State private var targeted = false
 
     private var sliceIndex: Int { (slot - 1) % RadialLayout.maxSlicesPerPage }
     private var lit: Bool { hovering || isSelected }
 
     var body: some View {
         HStack(spacing: 20) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Palette.boneFaint)
+                .frame(width: 12)
+                .opacity(canReorder && hovering ? 0.8 : 0)
+                .help("Drag to another slot")
+
             SlotGutter(slot: slot, sliceIndex: sliceIndex, emphasised: lit)
                 .scaleEffect(1.3)
                 .frame(width: 38, height: 38)
@@ -298,12 +315,27 @@ private struct LibraryRow: View {
                 .padding(.vertical, 14)
                 .scaleEffect(y: lit ? 1 : 0)
         }
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Palette.signal, lineWidth: 2)
+                .opacity(targeted ? 1 : 0)
+        )
         .shadow(color: Color.black.opacity(hovering ? 0.4 : 0), radius: 16, y: 10)
+        .shadow(color: Palette.signal.opacity(targeted ? 0.35 : 0), radius: 14)
+        .scaleEffect(targeted ? 1.015 : 1)
         .offset(y: hovering ? -2 : 0)
         .padding(.bottom, 6)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: onSelect)
+        .reorderable(
+            enabled: canReorder,
+            id: bookmark.id,
+            preview: dragPreview,
+            targeted: $targeted,
+            onDrop: onDrop
+        )
+        .motion(Motion.spring, value: targeted)
         .motion(Motion.spring, value: hovering)
         .motion(Motion.spring, value: isSelected)
         .contextMenu {
@@ -333,6 +365,24 @@ private struct LibraryRow: View {
             )
     }
 
+    /// What follows the pointer while the row is dragged: the tile and the name, lifted.
+    private var dragPreview: some View {
+        HStack(spacing: 12) {
+            Text(initial)
+                .font(Palette.display(16, .bold))
+                .foregroundStyle(Palette.signalInk)
+                .frame(width: 30, height: 30)
+                .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Brass.plate))
+            Text(bookmark.displayTitle)
+                .font(Palette.display(16, .semibold))
+                .foregroundStyle(Palette.bone)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Capsule().fill(Palette.voidRaised))
+        .overlay(Capsule().strokeBorder(Palette.signal.opacity(0.6), lineWidth: 1))
+    }
+
     /// A brass tile with the site's initial: recognisable at a glance, and entirely offline.
     private var monogram: some View {
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -353,5 +403,38 @@ private struct LibraryRow: View {
             return String(first).uppercased()
         }
         return "•"
+    }
+}
+
+// MARK: - Reordering
+
+private extension View {
+    /// Makes a row draggable onto other rows, when `enabled`.
+    ///
+    /// The payload is the bookmark's id as text: it never leaves the window in any useful way,
+    /// and it keeps the drop handler a pure lookup.
+    @ViewBuilder
+    func reorderable<Preview: View>(
+        enabled: Bool,
+        id: UUID,
+        preview: Preview,
+        targeted: Binding<Bool>,
+        onDrop: @escaping (UUID) -> Void
+    ) -> some View {
+        if enabled {
+            self
+                .draggable(id.uuidString) { preview }
+                .dropDestination(for: String.self) { items, _ in
+                    guard let raw = items.first, let dragged = UUID(uuidString: raw), dragged != id else {
+                        return false
+                    }
+                    onDrop(dragged)
+                    return true
+                } isTargeted: { isTargeted in
+                    targeted.wrappedValue = isTargeted
+                }
+        } else {
+            self
+        }
     }
 }

@@ -219,6 +219,34 @@ final class BookmarkStoreTests: XCTestCase {
         XCTAssertEqual(store.bookmarks.map(\.title), ["2", "0", "1"])
     }
 
+    func testDroppingOntoASlotLandsInThatSlot() {
+        let items = (0..<5).map { Bookmark(title: "\($0)", url: "https://s\($0).com") }
+
+        // Dragging down: lands on the target's slot, the ones between shift up.
+        let down = BookmarkStore(bookmarks: items)
+        XCTAssertTrue(down.move(id: items[0].id, ontoSlotOf: items[3].id))
+        XCTAssertEqual(down.bookmarks.map(\.title), ["1", "2", "3", "0", "4"])
+
+        // Dragging up: lands on the target's slot, the ones between shift down.
+        let up = BookmarkStore(bookmarks: items)
+        XCTAssertTrue(up.move(id: items[4].id, ontoSlotOf: items[1].id))
+        XCTAssertEqual(up.bookmarks.map(\.title), ["0", "4", "1", "2", "3"])
+
+        // Neighbours.
+        let next = BookmarkStore(bookmarks: items)
+        XCTAssertTrue(next.move(id: items[1].id, ontoSlotOf: items[2].id))
+        XCTAssertEqual(next.bookmarks.map(\.title), ["0", "2", "1", "3", "4"])
+    }
+
+    func testDroppingOntoYourselfOrAStrangerChangesNothing() {
+        let items = (0..<3).map { Bookmark(title: "\($0)", url: "https://s\($0).com") }
+        let store = BookmarkStore(bookmarks: items)
+        XCTAssertFalse(store.move(id: items[1].id, ontoSlotOf: items[1].id))
+        XCTAssertFalse(store.move(id: UUID(), ontoSlotOf: items[1].id))
+        XCTAssertFalse(store.move(id: items[1].id, ontoSlotOf: UUID()))
+        XCTAssertEqual(store.bookmarks.map(\.title), ["0", "1", "2"])
+    }
+
     func testUpdateRejectsCollision() {
         let second = Bookmark(title: "B", url: "https://b.com")
         let store = BookmarkStore(bookmarks: [Bookmark(title: "A", url: "https://a.com"), second])
